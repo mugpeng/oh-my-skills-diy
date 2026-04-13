@@ -1,0 +1,11 @@
+# AI / coding tool directories
+.trae/
+.cursor/
+.codex/
+.gemini/
+.openclaw/
+.codebuddy/
+.claude/
+
+# macOS
+.DS_Store
