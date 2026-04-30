@@ -36,11 +36,12 @@ Follow these steps in order unless the repository has explicit local conventions
 1. Pre-flight checks: verify the repo is in a clean, releasable state.
 2. Confirm the release version and inspect the delta since the previous tag.
 3. Bump version numbers in project metadata files if they exist.
-4. Update the changelog with a new top entry for the release.
-5. Commit the release-prep changes on `dev` and push `dev`.
-6. Merge `dev` into `main` and push `main`.
-7. Create the GitHub Release using the matching changelog entry as release notes.
-8. Sync tags back to local and switch back to `dev`.
+4. Check whether the repository README contains release-sensitive version references that also need updates.
+5. Update the changelog with a new top entry for the release.
+6. Commit the release-prep changes on `dev` and push `dev`.
+7. Merge `dev` into `main` and push `main`.
+8. Tag the release and push the tag to trigger the automated release workflow.
+9. Verify the workflow succeeded, then switch back to `dev`.
 
 ## Step 1: Pre-flight Checks
 
@@ -92,7 +93,41 @@ If the project contains version metadata files, update them to the target versio
 
 Only update files that actually exist. Skip this step if no version files are found.
 
-## Step 4: Update Changelog
+## Step 4: Check README Release References
+
+Before editing the changelog, inspect the repository README files for version-specific release references that would become stale after the release.
+
+Common files to check:
+
+- `README.md`
+- `README.zh-CN.md`
+- other top-level install or release docs if the repo uses them
+
+Look for at least these two patterns.
+
+1. Badge fields that embed a version string
+
+Examples:
+
+- shields.io badges such as `version-0.2.8`
+- badge labels or URLs that contain the current release number
+- install snippets near the top of the README that visually function as release status indicators
+
+If a README badge is meant to show the latest released version, update it to the target release version in the same release-prep change.
+
+2. Specific release install / pinning sections
+
+Examples:
+
+- a section like `To pin a specific release:`
+- commands such as `npm install -g package@0.2.8`
+- release-specific tarball or tag examples
+
+If the README includes a concrete install command or pinned version example, update it to the target release version. Do not leave an older explicit version in place after releasing a newer one unless the README clearly intends to document historical examples.
+
+If no README files exist, or the README does not contain versioned badges or specific-release examples, note that and continue.
+
+## Step 5: Update Changelog
 
 Locate the changelog file in the repo (common paths: `CHANGELOG.md`, `docs/CHANGELOG.md`, `CHANGES.md`). Add the new version entry at the top.
 
@@ -105,7 +140,7 @@ Match the repository's existing changelog style. A solid entry usually contains:
 
 Keep the notes aligned with actual code changes. Do not invent product language that the diff does not support.
 
-## Step 5: Commit And Push On `dev`
+## Step 6: Commit And Push On `dev`
 
 After updating release-related files, commit them on `dev` and push.
 
@@ -117,7 +152,7 @@ git push origin dev
 
 Only include files that were changed as part of release prep.
 
-## Step 6: Merge Into `main`
+## Step 7: Merge Into `main`
 
 Promote the release by merging `dev` into `main`.
 
@@ -137,31 +172,38 @@ If merge conflicts appear:
 3. Stage the resolved files with `git add` and complete the merge with `git commit`.
 4. Do not force-push. If unsure, stop and ask the user.
 
-## Step 7: Create The GitHub Release
+## Step 8: Tag And Trigger The Automated Workflow
 
-Create the GitHub Release after `main` is updated.
-
-For changelog content that is short (single line or paragraph):
+After `main` is updated, create and push the release tag. This triggers the repository's automated release workflow (e.g. `.github/workflows/release.yml`), which builds, tests, extracts changelog notes, creates the GitHub Release, and publishes to the package registry.
 
 ```bash
-gh release create v<version> --title "v<version>" --notes "<changelog text>"
+git tag v<version>
+git push origin v<version>
 ```
 
-For longer release notes, write them to a temporary file first:
-
-```bash
-gh release create v<version> --title "v<version>" --notes-file /tmp/release-notes-v<version>.md
-```
-
-Before creating the release, verify:
+Before pushing the tag, verify:
 
 - The tag name matches the changelog heading
-- The notes correspond to the exact release version
 - `main` already contains the intended release commit
+- The repository has a release workflow configured in `.github/workflows/`
 
-## Step 8: Sync And Restore
+If the repository has no automated release workflow, fall back to manual GitHub Release creation with `gh release create`.
 
-After the GitHub Release is created, sync tags locally and switch back to `dev`.
+## Step 9: Verify The Workflow And Restore
+
+After pushing the tag, verify the automated workflow completed successfully.
+
+```bash
+gh run list --workflow=release.yml --limit 1
+```
+
+If the run is still in progress, watch it:
+
+```bash
+gh run watch
+```
+
+Once the workflow succeeds, switch back to `dev`:
 
 ```bash
 git checkout dev
@@ -173,8 +215,10 @@ This ensures local state reflects the remotely created release tag and the user 
 ## Practical Rules
 
 - Prefer the repository's existing changelog tone and release formatting over generic wording.
+- If the repository README contains version badges or explicit "specific release" install examples, treat them as release files and keep them in sync with the target version.
 - Keep release commits focused on release-prep changes.
-- Do not create the GitHub Release before `main` contains the final release state.
+- Do not create the GitHub Release manually if the repository has an automated release workflow — let the tag push trigger it.
 - If the repository uses a scripted release process (e.g. `make release`), prefer that script over manually reproducing the steps.
+- If the repository has an automated release workflow, do not manually run `gh release create` — this would create a duplicate release.
 - If the user asks only for guidance, explain the steps without making changes.
 - If the user asks to execute the release, verify branch state and remote status before pushing.
