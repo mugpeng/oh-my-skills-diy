@@ -118,19 +118,34 @@ Read the source Markdown. Extract or infer:
 - existing cover fields: `cover`, `coverImage`, `featureImage`, `image`, `cover_image`
 - inline image paths
 
-If the article already has usable local images, prefer reusing them before generating new ones.
+If the article already has usable local images, prefer reusing them before generating new inline or social-card assets. Do not treat ordinary inline images as a replacement for a required platform cover unless the user explicitly asks to reuse that image as the cover.
 
 ### Step 3: Prepare Assets
 
 Create the workdir and copy the source article to `source.md`.
 
-Generate only the assets needed by selected platforms:
+Generate only the assets needed by selected platforms. "Preferred skill" below means the workflow must invoke or hand off to that skill when the asset is needed; do not replace it with ad hoc SVG/HTML/CSS/manual image construction unless the user explicitly asks for a non-AI/local fallback.
 
 | Need | Preferred skill | Output |
 |------|-----------------|--------|
 | shared article cover | `$baoyu-cover-image` | `assets/cover.png` |
 | social card set | `$baoyu-image-cards` | `assets/cards/` |
 | long-form inline illustrations | `$baoyu-article-illustrator` | `assets/inline/` |
+
+Invoke `$baoyu-cover-image` when any of these are true:
+
+- the user explicitly asks for a cover image, cover, 封面图, or article cover
+- selected platforms include WeChat article or X Article and no user-approved cover already exists
+- an existing cover is missing, remote-only, or not suitable for the target platform
+
+Invoke `$baoyu-image-cards` when any of these are true:
+
+- selected platforms include Xiaohongshu/RedNote
+- selected WeChat mode is image-text / 贴图 / 图文
+- selected X mode is a regular post with images/cards
+- the user asks for image cards, 图片卡片, 小红书图片, or social card series
+
+Invoke `$baoyu-article-illustrator` only when the article needs explanatory body illustrations, has visual placeholders, or the user explicitly asks for inline article illustrations / 配图.
 
 Use the cover for WeChat article and X Article. Use image cards for Xiaohongshu, WeChat image-text, and X regular posts. Use inline illustrations only when the source article benefits from body visuals or already has visual placeholders.
 
