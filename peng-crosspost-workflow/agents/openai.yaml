@@ -1,0 +1,5 @@
+interface:
+  display_name: "Peng Crosspost Workflow"
+  short_description: "Adapt articles for four platforms"
+  default_prompt: "Use $peng-crosspost-workflow to adapt a Markdown article for WeChat, Xiaohongshu, X, and Dev.to."
+
