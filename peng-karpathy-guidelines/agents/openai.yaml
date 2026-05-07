@@ -1,0 +1,4 @@
+interface:
+  display_name: "Peng Karpathy Guidelines"
+  short_description: "Pragmatic coding taste and guardrails"
+  default_prompt: "Use $peng-karpathy-guidelines to keep this code change simple, clear, decoupled, honest, and durable."
