@@ -14,6 +14,7 @@ Behavioral guidelines to reduce common LLM coding mistakes, derived from [Andrej
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
+- Reason from first principles: identify the real problem, hard constraints, and known facts before reaching for patterns, abstractions, or prior solutions.
 - State your assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
