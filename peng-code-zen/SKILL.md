@@ -1,11 +1,11 @@
 ---
 name: peng-code-zen
-description: "TypeScript/Node.js code style guide derived from aweskill. Use when creating, reviewing, or refactoring TypeScript CLI/library projects to enforce consistent structure, naming, patterns, and tooling. Triggers on: code style, project structure, naming conventions, TypeScript patterns, Biome config, tsup setup, vitest patterns, CLI architecture, error handling patterns."
+description: "Code style guide for clean, durable projects. Use when creating, reviewing, or refactoring code to enforce consistent structure, naming, patterns, and testing. Triggers on: code style, project structure, naming conventions, error handling, testing patterns, CLI architecture, dependency injection."
 ---
 
 # peng-code-zen
 
-TypeScript project code style reference. Apply these patterns unless the project has explicit conflicting conventions.
+Code style reference. Apply these patterns unless the project has explicit conflicting conventions.
 
 ## Design Principles
 
@@ -21,33 +21,31 @@ TypeScript project code style reference. Apply these patterns unless the project
 
 ```
 src/
-  index.ts          # Entry point — CLI bootstrap only
-  types.ts          # All shared types in one file
-  cli/              # CLI wiring (Commander config, error formatting) — no business logic
+  index.*           # Entry point — bootstrap only
+  types.*           # All shared types in one file
+  cli/              # CLI wiring (config, error formatting) — no business logic
   commands/         # One file per command, thin orchestrators, export run* functions
   lib/              # Pure business logic, no CLI coupling
-config/             # tsup / vitest config — not mixed into src
+config/             # Build / test config — not mixed into src
 tests/              # One test file per source module
 ```
 
-Separation rule: `cli/` handles I/O, `commands/` handles orchestration, `lib/` handles logic, `types.ts` handles types.
+Separation rule: `cli/` handles I/O, `commands/` handles orchestration, `lib/` handles logic, `types.*` handles types.
 
 ## Naming Conventions
 
-**Files**: kebab-case — `fix-skills.ts`, `source-parser.ts`
+**Files**: kebab-case — `fix-skills.*`, `source-parser.*`
 
 **Functions**:
 - Commands: `run` + PascalCase — `runImport()`, `runEnable()`
 - Utilities: camelCase verb — `sanitizeName()`, `pathExists()`
 - Booleans: `is` / `has` / `should` prefix — `isPathSafe()`, `shouldDefer()`
-- Formatters: `format` prefix — `formatCliErrorMessage()`
+- Formatters: `format` prefix — `formatErrorMessage()`
 - Assertions: `assert` prefix — `assertPathSafe()`
 
 **Types**: PascalCase — `RuntimeContext`, `ImportResult`
 
-**Enum-like**: string union, never `enum` — `type Scope = "global" | "project"`
-
-**Constants**: ALL_CAPS + `as const` — `LOCK_VERSION`, `SKIP_DIRS`
+**Constants**: ALL_CAPS — `LOCK_VERSION`, `SKIP_DIRS`
 
 ## Code Patterns
 
@@ -57,76 +55,73 @@ No classes except custom Error subclasses. Logic lives in plain exported functio
 
 ### Dependency injection via context
 
-Functions receive a `RuntimeContext` (or similar) with `write()`/`error()` callbacks. Tests inject mocks. No global state reads.
+Functions receive a context object with I/O callbacks. Tests inject mocks. No global state reads.
 
-```ts
-interface RuntimeContext {
-  write: (msg: string) => void;
-  error: (msg: string) => void;
+```
+RuntimeContext {
+  write: (msg: string) => void
+  error: (msg: string) => void
 }
 ```
 
 ### Error handling
 
-- Plain `new Error(message)` with user-facing, actionable messages
+- Error messages are user-facing and actionable
 - Custom Error subclasses only when extra structured fields are needed
-- `process.exitCode = 1`, never `process.exit()`
+- Never hard-exit; set exit code gracefully
 - Fail fast: validate at the top of handlers before doing work
 - Messages include guidance: `"Run "tool init" first."`, `"Re-run with --force to replace."`
 
 ### Imports
 
-- ESM-only (`"type": "module"`)
-- Internal imports with `.js` extension: `import { pathExists } from "./fs.js"`
-- Node builtins with `node:` prefix: `import { mkdir } from "node:fs/promises"`
-- Type-only imports: `import type { RuntimeContext } from "../types.js"`
-- Node imports first, then blank line, then third-party
+- Standard library first, blank line, then third-party
+- Type-only imports where the value is not used at runtime
+- Use the module system's idiomatic conventions (ESM, package imports, etc.)
 
 ### Async
 
-- `async/await` everywhere, no callbacks or raw promises
-- Independent operations: `Promise.all()`
-- File I/O: `node:fs/promises` only (no sync except bootstrap version reads)
-- Entry point: `void main()` fire-and-forget
+- Use the language's idiomatic async pattern throughout
+- Independent operations run in parallel
+- Prefer async I/O over sync except at bootstrap
 
 ### Output
 
-No logging framework. Output through context callbacks. UI layer styles by line prefix (success, warning, heading, dim).
+No logging framework. Output through context callbacks. UI layer applies formatting based on message type.
 
 ## Tool Chain
 
-- **Linter/Formatter**: Biome (replaces ESLint + Prettier)
-  - 2-space indent, 120 char lines, double quotes, semicolons
-- **Bundler**: tsup — ESM-only, target node20, source maps, declarations
-- **Test runner**: vitest — node environment
-- **TypeScript**: strict mode, `skipLibCheck: true`
-- **Scripts**: `build` (tsup), `dev` (tsx), `lint` (biome + tsc --noEmit), `test` (vitest)
+Use one tool per role. Prefer tools that combine roles (e.g., Biome = linter + formatter).
+
+- **Linter/Formatter**: enforces style automatically
+- **Bundler**: produces distributable output
+- **Test runner**: runs the test suite
+- **Type checker**: static analysis (if applicable)
+
+Standard scripts: `build`, `dev`, `lint`, `test`
 
 ## Testing
 
-- One test file per source module: `path.test.ts` for `path.ts`
+- One test file per source module
 - Real temp directories, real file writes — no filesystem mocking at module level
-- `RuntimeContext` mock captures output for assertion
-- `afterEach`: `vi.restoreAllMocks()`
-- Integration tests: inject context into `createProgram()`, call `program.parseAsync()`
+- Context mock captures output for assertion
+- Clean up mocks after each test
+- Integration tests: inject context into the entry point, invoke commands programmatically
 
-```ts
+```
 // Test helper pattern
-function createRuntime(homeDir: string, cwd: string) {
-  const output: string[] = [];
-  const errors: string[] = [];
+function createRuntime(homeDir, cwd):
+  output = []
+  errors = []
   return {
-    ctx: { write: (m) => output.push(m), error: (m) => errors.push(m) },
+    ctx: { write: m => output.push(m), error: m => errors.push(m) },
     output,
-    errors,
-  };
-}
+    errors
+  }
 ```
 
-## TypeScript Strict Patterns
+## Type System (if applicable)
 
-- Discriminated unions with `kind` field for status types
-- `satisfies` for type checking without widening
-- `as const` on literal arrays for type narrowing
-- Mapped types: `Omit<T, "a" | "b">` for variants
-- No decorators, no namespaces, no abstract classes
+- Discriminated unions for status/state types
+- Prefer composition over inheritance
+- No decorators, no namespaces, no abstract classes unless the language strongly favors them
+- Use the language's strongest available type narrowing features
