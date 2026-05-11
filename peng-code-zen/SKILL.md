@@ -119,6 +119,18 @@ function createRuntime(homeDir, cwd):
   }
 ```
 
+## Documentation
+
+Three documents, each with a clear boundary. Do not duplicate content across them.
+
+**README.md** — User-facing. What the project is, how to install, how to use. Keep it focused on getting a user from zero to running. No design rationale, no contributor workflow.
+
+**docs/CONTRIBUTING.md** — Contributor-facing. Development setup, branch model, code style, testing, release workflow, contribution guidelines. Covers the "how do I work on this project" question. References DESIGN.md for product-level constraints.
+
+**docs/DESIGN.md** — Stable design constraints. Not a quickstart, not a workflow guide. Written as facts and rules ("should", "must", "should not"). Covers architecture, data model, command model, semantics, edge cases. This is the document that answers "why does it work this way" and "what are the invariants."
+
+When behavior changes, update all three that are affected in the same PR.
+
 ## Type System (if applicable)
 
 - Discriminated unions for status/state types
