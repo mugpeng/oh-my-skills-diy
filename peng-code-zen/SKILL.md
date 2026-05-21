@@ -121,15 +121,25 @@ function createRuntime(homeDir, cwd):
 
 ## Documentation
 
-Three documents, each with a clear boundary. Do not duplicate content across them.
+Four documents, each with a clear boundary. Do not duplicate content across them.
 
 **README.md** — User-facing. What the project is, how to install, how to use. Keep it focused on getting a user from zero to running. No design rationale, no contributor workflow.
 
-**docs/CONTRIBUTING.md** — Contributor-facing. Development setup, branch model, code style, testing, release workflow, contribution guidelines. Covers the "how do I work on this project" question. References DESIGN.md for product-level constraints.
+**README_cn.md** — Chinese mirror of README.md. Same hero block with language toggle swapped. All content in Chinese.
 
-**docs/DESIGN.md** — Stable design constraints. Not a quickstart, not a workflow guide. Written as facts and rules ("should", "must", "should not"). Covers architecture, data model, command model, semantics, edge cases. This is the document that answers "why does it work this way" and "what are the invariants."
+**docs/CONTRIBUTING.md** — Contributor-facing. Development setup, branch model, code style, testing, release workflow, contribution guidelines. Includes stable design constraints (architecture, data model, command model, semantics, edge cases) written as facts and rules. Covers both "how do I work on this project" and "why does it work this way."
 
-When behavior changes, update all three that are affected in the same PR.
+**docs/CHANGELOG.md** — Version history. Each release gets a `## vX.Y.Z` section with a summary paragraph, optional subsections for major changes, and a `### Highlights` bullet list. Newest version first. Start at `v0.1.0`.
+
+When behavior changes, update all documents that are affected in the same PR.
+
+## CI/CD
+
+Two GitHub Actions workflows in `.github/workflows/`:
+
+**ci.yml** — Runs on push to `main` and pull requests. Tests across OS and runtime version matrix.
+
+**release.yml** — Triggered by `v*` tags. Runs tests, extracts release notes from `docs/CHANGELOG.md`, creates GitHub Release, publishes to package registry.
 
 ## Type System (if applicable)
 
@@ -178,7 +188,7 @@ Read version from `package.json` (Node) or `__init__.py` (Python). Output format
 
 ```html
 <div align="center">
-  <h1>toolname</h1>
+  <h1>toolname: Short Description</h1>
   <p><strong>Short tagline.</strong></p>
   <p>One sentence expanding on what it does.</p>
   <p>
@@ -191,8 +201,10 @@ Read version from `package.json` (Node) or `__init__.py` (Python). Output format
   </p>
   <p>
     <img src="https://img.shields.io/badge/status-alpha-c96a3d?style=flat-square" alt="Status">
-    <img src="https://img.shields.io/badge/provider-Claude%20%7C%20Codex-7C3AED?style=flat-square" alt="Providers">
-    <img src="https://img.shields.io/badge/platform-tmux-334155?style=flat-square" alt="Platform">
+    <img src="https://img.shields.io/badge/install-npm-22C55E?style=flat-square" alt="npm install">
+    <img src="https://img.shields.io/badge/platform-terminal-334155?style=flat-square" alt="Platform">
+    <img src="https://img.shields.io/npm/dm/toolname?style=flat-square" alt="npm downloads">
+    <img src="https://img.shields.io/github/stars/owner/toolname?style=flat-square" alt="GitHub stars">
   </p>
 </div>
 
@@ -201,9 +213,11 @@ Read version from `package.json` (Node) or `__init__.py` (Python). Output format
 
 Badge rows (two `<p>` blocks):
 1. Version + language/runtime requirement
-2. Status + providers + platform
+2. Status + install + platform + downloads + stars
 
-Badge colors (flat-square): version `7C3AED`, language `0EA5E9`, status `c96a3d`, providers `7C3AED`, platform `334155`, install `22C55E`.
+Required badges (minimum): version, language/runtime, status, downloads, stars. Add install and platform when applicable.
+
+Badge colors (flat-square): version `7C3AED`, language `0EA5E9`, status `c96a3d`, install `22C55E`, platform `334155`.
 
 ### Body Structure
 
