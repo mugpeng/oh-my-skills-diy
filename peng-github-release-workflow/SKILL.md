@@ -1,5 +1,5 @@
 ---
-name: github-release-workflow
+name: peng-github-release-workflow
 description: Use when a project uses a GitHub release flow with dev -> main promotion, changelog updates, tags, and GitHub Releases, including requests phrased in English or Chinese such as 发布 release, 合并 dev 到 main, 更新 changelog, or 同步 tag.
 ---
 
