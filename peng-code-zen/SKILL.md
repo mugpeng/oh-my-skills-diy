@@ -127,7 +127,7 @@ Four documents, each with a clear boundary. Do not duplicate content across them
 
 **README_cn.md** — Chinese mirror of README.md. Same hero block with language toggle swapped. All content in Chinese.
 
-**docs/CONTRIBUTING.md** — Contributor-facing. Development setup, branch model, code style, testing, release workflow, contribution guidelines. Includes stable design constraints (architecture, data model, command model, semantics, edge cases) written as facts and rules. Covers both "how do I work on this project" and "why does it work this way."
+**docs/CONTRIBUTING.md** — Contributor-facing. Development setup, branch model, code style, testing, release workflow, contribution guidelines. Must include an **Engineering Taste** section with the 7 design principles (Simple, Clear, Decoupled, Honest, Focused, Durable, First principles) — copy them verbatim from Design Principles above. Includes stable design constraints (architecture, data model, command model, semantics, edge cases) written as facts and rules. Covers both "how do I work on this project" and "why does it work this way."
 
 **docs/CHANGELOG.md** — Version history. Each release gets a `## vX.Y.Z` section with a summary paragraph, optional subsections for major changes, and a `### Highlights` bullet list. Newest version first. Start at `v0.1.0`.
 
