@@ -42,7 +42,7 @@ Found -> read, parse, apply. Not found -> use defaults.
 
 - Google Chrome or Chromium installed
 - `bun` runtime (`brew install oven-sh/bun/bun`)
-- First run: log in to X manually in the browser (session saved)
+- Chrome must be closed before running (the script launches Chrome with your profile)
 
 ## Markdown Format
 
@@ -110,7 +110,7 @@ ${BUN_X} {baseDir}/scripts/x-thread.ts <file.md> --submit --profile ~/my-chrome-
 | `<file.md>` | Markdown file (required) |
 | `--submit` | Post all tweets (default: preview first only) |
 | `--delay <ms>` | Delay between tweets (default: frontmatter or 2000) |
-| `--profile <dir>` | Chrome profile directory |
+| `--profile <dir\|mode>` | `local` (default, your Chrome profile), `isolated`, or a custom directory path |
 | `--chrome <path>` | Chrome executable path |
 
 ## Workflow
@@ -152,7 +152,8 @@ Checks: Chrome, profile, bun, Accessibility (macOS), clipboard, paste keystroke.
 
 ## Notes
 
-- First run: manual login required (session persists in Chrome profile)
+- Default uses your local Chrome profile (already logged in to X). Close Chrome before running.
+- Use `--profile isolated` if you want to run without closing Chrome (requires manual X login on first use)
 - All scripts only fill content into the browser; user reviews before posting
 - Threads with 5+ tweets: consider `--delay 3000` or higher to avoid rate limits
 - Cross-platform: macOS, Linux, Windows

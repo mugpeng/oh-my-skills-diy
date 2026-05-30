@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import {
@@ -21,6 +22,24 @@ import { parseThread, validateTweets, type ThreadTweet, type ThreadParseResult }
 const X_COMPOSE_URL = 'https://x.com/compose/post';
 const STATUS_URL_RE = /https?:\/\/(?:x\.com|twitter\.com)\/\w+\/status\/(\d+)/;
 
+function getLocalChromeProfileDir(): string {
+  const home = os.homedir();
+  switch (process.platform) {
+    case 'darwin':
+      return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+    case 'win32':
+      return path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
+    default:
+      return path.join(home, '.config', 'google-chrome');
+  }
+}
+
+function resolveProfileDir(profileArg?: string): string {
+  if (!profileArg || profileArg === 'local') return getLocalChromeProfileDir();
+  if (profileArg === 'isolated') return getDefaultProfileDir();
+  return path.resolve(profileArg);
+}
+
 interface ThreadOptions {
   filePath: string;
   submit?: boolean;
@@ -28,6 +47,7 @@ interface ThreadOptions {
   profileDir?: string;
   chromePath?: string;
   timeoutMs?: number;
+  continueFromUrl?: string;
 }
 
 // --- CDP helpers ---
@@ -136,12 +156,30 @@ async function clickSubmit(cdp: CdpConnection, sessionId: string): Promise<void>
 async function waitForTweetUrl(cdp: CdpConnection, sessionId: string, timeoutMs = 30_000): Promise<string | null> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const result = await cdp.send<{ result: { value: string } }>('Runtime.evaluate', {
+    // Check URL bar
+    const urlResult = await cdp.send<{ result: { value: string } }>('Runtime.evaluate', {
       expression: 'window.location.href',
       returnByValue: true,
     }, { sessionId });
-    const match = result.result.value.match(STATUS_URL_RE);
-    if (match) return match[0].replace(/twitter\.com/, 'x.com');
+    const urlMatch = urlResult.result.value.match(STATUS_URL_RE);
+    if (urlMatch) return urlMatch[0].replace(/twitter\.com/, 'x.com');
+
+    // Check for tweet links on the page (toast, confirmation, etc.)
+    const linkResult = await cdp.send<{ result: { value: string | null } }>('Runtime.evaluate', {
+      expression: `
+        (() => {
+          const links = document.querySelectorAll('a[href*="/status/"]');
+          for (const a of links) {
+            const m = a.href.match(/https?:\\/\\/(?:x\\.com|twitter\\.com)\\/\\w+\\/status\\/\\d+/);
+            if (m) return m[0].replace(/twitter\\.com/, 'x.com');
+          }
+          return null;
+        })()
+      `,
+      returnByValue: true,
+    }, { sessionId });
+    if (linkResult.result.value) return linkResult.result.value;
+
     await sleep(500);
   }
   return null;
@@ -240,10 +278,18 @@ export async function postThread(options: ThreadOptions): Promise<void> {
     filePath,
     submit = false,
     delayMs,
-    profileDir = getDefaultProfileDir(),
+    profileDir,
     chromePath,
     timeoutMs = 120_000,
+    continueFromUrl,
   } = options;
+
+  const resolvedProfile = resolveProfileDir(profileDir);
+  const isLocalProfile = resolvedProfile === getLocalChromeProfileDir();
+
+  if (isLocalProfile) {
+    console.log('Using local Chrome profile (close Chrome before running if it fails to launch).');
+  }
 
   // Parse markdown
   const result: ThreadParseResult = parseThread(filePath);
@@ -263,20 +309,20 @@ export async function postThread(options: ThreadOptions): Promise<void> {
   const effectiveSubmit = submit || result.config.auto_submit;
 
   // Launch Chrome
-  await mkdir(profileDir, { recursive: true });
-  const existingPort = await findExistingChromeDebugPort(profileDir);
+  await mkdir(resolvedProfile, { recursive: true });
+  const existingPort = await findExistingChromeDebugPort(resolvedProfile);
   const reusing = existingPort !== null;
   let port = existingPort ?? 0;
   let chrome: Awaited<ReturnType<typeof launchChrome>>['chrome'] | null = null;
 
   if (!reusing) {
-    const launched = await launchChrome(X_COMPOSE_URL, profileDir, CHROME_CANDIDATES_FULL, chromePath);
+    const launched = await launchChrome(X_COMPOSE_URL, resolvedProfile, CHROME_CANDIDATES_FULL, chromePath);
     port = launched.port;
     chrome = launched.chrome;
   }
 
   if (reusing) console.log(`Reusing existing Chrome on port ${port}`);
-  else console.log(`Launching Chrome (profile: ${profileDir})`);
+  else console.log(`Launching Chrome (profile: ${resolvedProfile})`);
 
   let cdp: CdpConnection | null = null;
   let sessionId: string | null = null;
@@ -305,13 +351,23 @@ export async function postThread(options: ThreadOptions): Promise<void> {
       loggedInDuringRun = true;
     }
 
-    // Post first tweet
-    const firstTweet = result.tweets[0]!;
-    let prevUrl = await postFirstTweet(cdp, sessionId, firstTweet, effectiveSubmit, timeoutMs);
+    // Post first tweet (or use continueFromUrl)
+    let prevUrl: string | null = null;
+    let startIndex = 0;
+
+    if (continueFromUrl) {
+      console.log(`\nContinuing thread from: ${continueFromUrl}`);
+      prevUrl = continueFromUrl;
+      startIndex = 1;
+    } else {
+      const firstTweet = result.tweets[0]!;
+      prevUrl = await postFirstTweet(cdp, sessionId, firstTweet, effectiveSubmit, timeoutMs);
+      startIndex = 1;
+    }
 
     // Post remaining tweets as replies
     if (effectiveSubmit && prevUrl) {
-      for (let i = 1; i < result.tweets.length; i++) {
+      for (let i = startIndex; i < result.tweets.length; i++) {
         const tweet = result.tweets[i]!;
         prevUrl = await postReply(
           cdp, sessionId, prevUrl, tweet, result.tweets.length,
@@ -321,7 +377,7 @@ export async function postThread(options: ThreadOptions): Promise<void> {
       }
 
       console.log(`\nThread posted: ${result.tweets.length} tweets`);
-    } else if (!effectiveSubmit) {
+    } else if (!effectiveSubmit && !continueFromUrl) {
       console.log('\nPreview complete. Review the first tweet in the browser.');
       console.log('Add --submit to post the full thread automatically.');
     }
@@ -353,11 +409,16 @@ Usage:
   bun x-thread.ts <file.md> [options]
 
 Options:
-  --submit         Post all tweets (default: preview first tweet only)
-  --delay <ms>     Delay between tweets (default: from frontmatter or 2000)
-  --profile <dir>  Chrome profile directory
-  --chrome <path>  Chrome executable path
-  --help           Show this help
+  --submit              Post all tweets (default: preview first tweet only)
+  --delay <ms>          Delay between tweets (default: from frontmatter or 2000)
+  --profile <dir|mode>  Chrome profile: "local" (default, your Chrome) or "isolated"
+  --chrome <path>       Chrome executable path
+  --continue-from <url> Skip first tweet, continue thread from this tweet URL
+  --help                Show this help
+
+Profile modes:
+  local     Use your real Chrome profile (already logged in, close Chrome first)
+  isolated  Use an isolated profile at ~/Library/Application Support/baoyu-skills/chrome-profile
 
 Markdown format:
   Use --- on its own line to separate tweets.
@@ -367,6 +428,8 @@ Examples:
   bun x-thread.ts thread.md
   bun x-thread.ts thread.md --submit
   bun x-thread.ts thread.md --submit --delay 3000
+  bun x-thread.ts thread.md --profile isolated
+  bun x-thread.ts thread.md --submit --continue-from https://x.com/user/status/123
 `);
   process.exit(0);
 }
@@ -380,6 +443,7 @@ async function main(): Promise<void> {
   let delayMs: number | undefined;
   let profileDir: string | undefined;
   let chromePath: string | undefined;
+  let continueFromUrl: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -391,6 +455,8 @@ async function main(): Promise<void> {
       profileDir = args[++i];
     } else if (arg === '--chrome' && args[i + 1]) {
       chromePath = args[++i];
+    } else if (arg === '--continue-from' && args[i + 1]) {
+      continueFromUrl = args[++i];
     } else if (!arg.startsWith('-')) {
       filePath = arg;
     }
@@ -402,7 +468,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  await postThread({ filePath, submit, delayMs, profileDir, chromePath });
+  await postThread({ filePath, submit, delayMs, profileDir, chromePath, continueFromUrl });
 }
 
 await main().catch((err) => {

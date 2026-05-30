@@ -140,7 +140,10 @@ async function main(): Promise<void> {
   }
 }
 
-await main().catch((err) => {
-  console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});
+const isMain = import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('md-to-thread.ts');
+if (isMain) {
+  await main().catch((err) => {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
+}
