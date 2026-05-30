@@ -1,0 +1,9 @@
+{
+  "name": "peng-post-to-x-thread-scripts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "baoyu-chrome-cdp": "^0.1.0",
+    "gray-matter": "^4.0.3"
+  }
+}
