@@ -71,15 +71,13 @@ async function waitForSelector(
 }
 
 async function typeText(cdp: CdpConnection, sessionId: string, text: string): Promise<void> {
+  // Focus the editor first
   await cdp.send('Runtime.evaluate', {
-    expression: `
-      const editor = document.querySelector('[data-testid="tweetTextarea_0"]');
-      if (editor) {
-        editor.focus();
-        document.execCommand('insertText', false, ${JSON.stringify(text)});
-      }
-    `,
+    expression: `document.querySelector('[data-testid="tweetTextarea_0"]')?.focus()`,
   }, { sessionId });
+  await sleep(300);
+  // Use CDP Input.insertText (more reliable than execCommand, especially in reply dialogs)
+  await cdp.send('Input.insertText', { text }, { sessionId });
   await sleep(500);
 }
 
@@ -259,9 +257,51 @@ async function postReply(
     return null;
   }
 
+  // Collect existing status URLs before submit
+  const existingUrls = await cdp.send<{ result: { value: string[] } }>('Runtime.evaluate', {
+    expression: `
+      (() => {
+        const urls = [];
+        for (const a of document.querySelectorAll('a[href*="/status/"]')) {
+          const m = a.href.match(/https?:\\/\\/(?:x\\.com|twitter\\.com)\\/\\w+\\/status\\/\\d+/);
+          if (m) urls.push(m[0].replace(/twitter\\.com/, 'x.com'));
+        }
+        return [...new Set(urls)];
+      })()
+    `,
+    returnByValue: true,
+  }, { sessionId });
+  const preUrls = new Set(existingUrls.result.value);
+
   console.log('  Submitting reply...');
   await clickSubmit(cdp, sessionId);
-  const tweetUrl = await waitForTweetUrl(cdp, sessionId);
+
+  // Wait for a NEW status URL to appear (not one that existed before submit)
+  let tweetUrl: string | null = null;
+  const submitStart = Date.now();
+  while (Date.now() - submitStart < 30_000) {
+    const afterUrls = await cdp.send<{ result: { value: string[] } }>('Runtime.evaluate', {
+      expression: `
+        (() => {
+          const urls = [];
+          for (const a of document.querySelectorAll('a[href*="/status/"]')) {
+            const m = a.href.match(/https?:\\/\\/(?:x\\.com|twitter\\.com)\\/\\w+\\/status\\/\\d+/);
+            if (m) urls.push(m[0].replace(/twitter\\.com/, 'x.com'));
+          }
+          return [...new Set(urls)];
+        })()
+      `,
+      returnByValue: true,
+    }, { sessionId });
+    for (const url of afterUrls.result.value) {
+      if (!preUrls.has(url)) {
+        tweetUrl = url;
+        break;
+      }
+    }
+    if (tweetUrl) break;
+    await sleep(500);
+  }
   if (!tweetUrl) throw new Error('Could not capture reply tweet URL after submit.');
   console.log(`  Posted: ${tweetUrl}`);
 
