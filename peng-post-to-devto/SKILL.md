@@ -13,7 +13,8 @@ Publish articles to Dev.to via its REST API. Supports Markdown input with frontm
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/devto-api.ts` | Article CRUD: create, update, list, publish drafts |
+| `scripts/token.ts` | Shared token resolution (env → .peng-skills/.env) |
+| `scripts/devto-api.ts` | Article CRUD: create, update, list, publish, dedupe, preview |
 | `scripts/md-to-devto.ts` | Parse Markdown + frontmatter into Dev.to API payload |
 | `scripts/check-token.ts` | Verify DEVTO_TOKEN is valid |
 
@@ -41,15 +42,51 @@ Found -> read, parse, apply. Not found -> use defaults.
 
 **Value priority**: CLI args -> frontmatter -> EXTEND.md -> skill defaults.
 
-## Pre-flight Check
+## Pre-flight Checks
 
-Before first use, verify the API token:
+Run ALL checks before first use. Stop on first failure.
+
+### 1. Dependencies
+
+```bash
+ls {baseDir}/scripts/node_modules/gray-matter/package.json
+```
+
+If missing:
+
+```bash
+cd {baseDir}/scripts && bun install
+```
+
+If `bun` is not installed: `brew install oven-sh/bun/bun` or `npm install -g bun`.
+
+### 2. Token
 
 ```bash
 ${BUN_X} {baseDir}/scripts/check-token.ts
 ```
 
+Token is resolved from (in order): `DEVTO_TOKEN` env var → `<skill>/.peng-skills/.env` → `~/.peng-skills/.env`.
+
 If token is missing or invalid, follow setup in `references/api-setup.md`.
+
+### 3. Local Images
+
+After parsing the markdown file, check for local image paths:
+
+```bash
+${BUN_X} {baseDir}/scripts/devto-api.ts preview <file.md>
+```
+
+The preview command scans for local images (paths not starting with `http://` or `https://`) in both `cover_image` and body `![](...)` syntax. If found, it warns and lists them.
+
+**Dev.to requires public URLs for all images.** Local paths will appear as broken images.
+
+Options to fix:
+- Upload to an image hosting service (imgur, Cloudinary, etc.)
+- Push images to your git repo and use GitHub raw URLs:
+  `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>`
+- If in a git repo, infer the raw URL from `git remote` + current branch + file path
 
 ## Article Posting Workflow
 
@@ -57,8 +94,10 @@ If token is missing or invalid, follow setup in `references/api-setup.md`.
 Step 1: Load preferences (EXTEND.md)
 Step 2: Parse input and extract metadata
 Step 3: Resolve tags, series, canonical URL
-Step 4: Publish to Dev.to
-Step 5: Report completion
+Step 4: Preview metadata (show what will be submitted)
+Step 5: Check for duplicates
+Step 6: Publish to Dev.to
+Step 7: Report completion
 ```
 
 ### Step 1: Load Preferences
@@ -85,7 +124,7 @@ Check and load EXTEND.md. If not found, use defaults.
 | `description` | No | One-line summary for previews and SEO |
 | `tags` | No | Array of up to 4 tags (lowercase, no spaces) |
 | `published` | No | `true` to publish, `false` for draft |
-| `cover_image` | No | Cover image URL |
+| `cover_image` | No | Cover image URL (must be a public URL, not local path) |
 | `canonical_url` | No | Original URL if cross-posting |
 | `series` | No | Series name to group articles |
 
@@ -111,7 +150,38 @@ series: "Rust Fundamentals"
 5. **Cover image**: CLI `--cover` -> frontmatter `cover_image` -> omit.
 6. **Org**: CLI `--org` -> EXTEND.md `default_org` -> omit.
 
-### Step 4: Publish
+### Step 4: Preview Metadata
+
+Before publishing, show the user exactly what will be submitted:
+
+```bash
+${BUN_X} {baseDir}/scripts/devto-api.ts preview <file.md>
+```
+
+This displays:
+- Title, tags, description, series, cover, canonical URL
+- Published status (with clear "PUBLIC" vs "draft" label)
+- Local image warnings (if any)
+- Missing tags/description warnings
+
+**Wait for user confirmation** before proceeding to Step 5.
+
+### Step 5: Check for Duplicates
+
+Before creating, check if an article with the same title already exists:
+
+```bash
+${BUN_X} {baseDir}/scripts/devto-api.ts dedupe-title <file.md>
+```
+
+If duplicates found:
+- Show existing article IDs, status (draft/published), and edit URLs
+- Ask user: update existing article, or proceed with new creation
+- If updating: use `devto-api.ts update <id> <file.md>` instead of create
+
+This prevents duplicates from interrupted or retried operations.
+
+### Step 6: Publish
 
 ```bash
 ${BUN_X} {baseDir}/scripts/devto-api.ts create <file> [--publish] [--draft] [--org <id>]
@@ -122,25 +192,28 @@ Or update existing:
 ${BUN_X} {baseDir}/scripts/devto-api.ts update <article_id> <file> [--publish] [--draft]
 ```
 
-### Step 5: Completion Report
+### Step 7: Completion Report
 
 ```
-Dev.to Publishing Complete!
+Dev.to Article Created!
 
 Input: [type] - [path]
 Article:
   Title: [title]
   Tags: [tags]
   Series: [series or "none"]
-  Status: [Published | Draft]
+  Status: [Published (PUBLIC) | Draft (not public)]
   Canonical: [url or "none"]
 Result:
   URL: https://dev.to/[username]/[slug]
   ID: [article_id]
-Next Steps:
-  -> Edit: https://dev.to/[username]/[slug]/edit
-  -> Dashboard: https://dev.to/dashboard
+
+This is a DRAFT — it is NOT publicly visible.
+To publish later: bun scripts/devto-api.ts publish [article_id]
+To edit: https://dev.to/[username]/[slug]/edit
 ```
+
+**Important**: Always clarify whether the article is a draft or published. If draft, explicitly state "not public" and provide the command to publish later.
 
 ## Article Management
 
@@ -153,6 +226,12 @@ ${BUN_X} {baseDir}/scripts/devto-api.ts publish <article_id>
 
 # Unpublish (convert to draft)
 ${BUN_X} {baseDir}/scripts/devto-api.ts unpublish <article_id>
+
+# Check for duplicate titles
+${BUN_X} {baseDir}/scripts/devto-api.ts dedupe-title <file.md>
+
+# Preview metadata without publishing
+${BUN_X} {baseDir}/scripts/devto-api.ts preview <file.md>
 ```
 
 ## Cross-Posting Strategy
@@ -163,14 +242,19 @@ ${BUN_X} {baseDir}/scripts/devto-api.ts unpublish <article_id>
 
 ## Troubleshooting
 
-| Issue | Fix |
-|-------|-----|
-| `401 Unauthorized` | Token invalid. Re-run setup per `references/api-setup.md` |
-| `422 Unprocessable` | Check frontmatter: tags lowercase, max 4; title required |
-| `429 Rate Limited` | Wait a few minutes and retry |
-| Tags rejected | Lowercase, alphanumeric, no spaces, max 30 chars each |
-| Cover image not showing | Must be a valid URL (not local path) |
+| Issue | Recovery |
+|-------|----------|
+| `gray-matter` not found / module error | `cd {baseDir}/scripts && bun install` |
 | `bun` not found | `brew install oven-sh/bun/bun` or `npm install -g bun` |
+| `401 Unauthorized` | Token invalid. Run `bun scripts/check-token.ts`. See `references/api-setup.md` |
+| `422 Unprocessable` | Check frontmatter: tags lowercase, max 4; title required; cover_image must be URL |
+| `429 Rate Limited` | Wait a few minutes and retry |
+| Network error / timeout | Check internet connection. In sandboxed env, ensure outbound HTTPS is allowed |
+| Tags rejected | Lowercase, alphanumeric, no spaces, max 30 chars each |
+| Cover image not showing | Must be a public URL (not local path). Upload or use GitHub raw URL |
+| Duplicate article after retry | Run `dedupe-title <file.md>` to find existing, then `update <id>` instead of create |
+| Images broken after publish | All images need public URLs. Push to git repo and use `raw.githubusercontent.com` URLs |
+| Token check passes but create fails | Both use the same token source now. Check if token has required scopes |
 
 ## References
 

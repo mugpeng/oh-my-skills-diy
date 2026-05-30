@@ -15,35 +15,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { resolve, basename } from "path";
 import { dirname } from "path";
 import matter from "gray-matter";
+import { getToken } from "./token";
 
 const API_BASE = "https://dev.to/api";
-
-function getToken(): string {
-  // Check .env file in skill directory
-  const skillDir = dirname(new URL(import.meta.url).pathname);
-  const envPaths = [
-    resolve(skillDir, "..", ".peng-skills", ".env"),
-    resolve(process.env.HOME || "~", ".peng-skills", ".env"),
-  ];
-
-  for (const p of envPaths) {
-    try {
-      const content = readFileSync(p, "utf-8");
-      const match = content.match(/DEVTO_TOKEN=(.+)/);
-      if (match) return match[1].trim();
-    } catch {}
-  }
-
-  // Check environment variable
-  const token = process.env.DEVTO_TOKEN;
-  if (!token) {
-    console.error("Error: DEVTO_TOKEN not found.");
-    console.error("Set it via environment variable or .peng-skills/.env file.");
-    console.error("See references/api-setup.md for instructions.");
-    process.exit(1);
-  }
-  return token;
-}
 
 async function apiCall(
   path: string,
@@ -65,9 +39,22 @@ async function apiCall(
 
   if (!res.ok) {
     const msg = data?.error || data?.message || `HTTP ${res.status}`;
-    console.error(`API Error: ${msg}`);
+    console.error(`\nAPI Error: ${msg}`);
     if (res.status === 401) {
-      console.error("Token may be invalid. Run: bun scripts/check-token.ts");
+      console.error("Recovery: Token is invalid or expired.");
+      console.error("  Run: bun scripts/check-token.ts");
+      console.error("  See: references/api-setup.md");
+    } else if (res.status === 422) {
+      console.error("Recovery: Invalid article data.");
+      console.error("  - Tags must be lowercase, alphanumeric, max 4");
+      console.error("  - Title is required");
+      console.error("  - cover_image must be a valid URL (not a local path)");
+    } else if (res.status === 429) {
+      console.error("Recovery: Rate limited. Wait a few minutes and retry.");
+    } else if (!res.status || res.status >= 500) {
+      console.error("Recovery: Dev.to server error or network issue.");
+      console.error("  - Check https://dev.to for outage notices");
+      console.error("  - Verify network connectivity");
     }
     process.exit(1);
   }
@@ -154,13 +141,30 @@ async function cmdCreate(args: string[]) {
   console.log(`  Tags: ${tags.join(", ") || "none"}`);
   console.log(`  Status: ${published ? "Published" : "Draft"}`);
 
-  const data = await apiCall("/articles", "POST", token, body);
+  let data;
+  try {
+    data = await apiCall("/articles", "POST", token, body);
+  } catch (err) {
+    console.error("\nNetwork Error: Could not reach Dev.to API.");
+    console.error(`  Error: ${err instanceof Error ? err.message : String(err)}`);
+    console.error("\n  Recovery:");
+    console.error("  - Check your internet connection");
+    console.error("  - If in a sandboxed environment, ensure outbound HTTPS is allowed");
+    console.error("  - If interrupted, run 'dedupe-title' before retrying to avoid duplicates");
+    process.exit(1);
+  }
 
-  console.log(`\nDev.to Publishing Complete!`);
-  console.log(`  Title: ${data.title}`);
-  console.log(`  URL: ${data.url}`);
-  console.log(`  ID: ${data.id}`);
-  console.log(`  Status: ${data.published ? "Published" : "Draft"}`);
+  const statusLabel = data.published ? "Published (PUBLIC)" : "Draft (not public)";
+  console.log(`\nDev.to Article Created!`);
+  console.log(`  Title:  ${data.title}`);
+  console.log(`  URL:    ${data.url}`);
+  console.log(`  ID:     ${data.id}`);
+  console.log(`  Status: ${statusLabel}`);
+  if (!data.published) {
+    console.log(`\n  This is a DRAFT — it is NOT publicly visible.`);
+    console.log(`  To publish later: bun scripts/devto-api.ts publish ${data.id}`);
+    console.log(`  To edit: ${data.url}/edit`);
+  }
   return data;
 }
 
@@ -256,6 +260,104 @@ async function cmdUnpublish(args: string[]) {
   return data;
 }
 
+async function cmdDedupeTitle(args: string[]) {
+  const fileIdx = args.findIndex((a) => !a.startsWith("-"));
+  const filePath = args[fileIdx];
+  if (!filePath) {
+    console.error("Usage: devto-api.ts dedupe-title <file.md>");
+    process.exit(1);
+  }
+
+  const raw = readFileSync(resolve(filePath), "utf-8");
+  const { data: fm, content } = matter(raw);
+  const title = extractTitle(content, fm.title);
+
+  const token = getToken();
+
+  // Search drafts and published articles
+  const [drafts, published] = await Promise.all([
+    apiCall("/articles/me/unpublished", "GET", token) as Promise<any[]>,
+    apiCall("/articles/me/published?per_page=30", "GET", token) as Promise<any[]>,
+  ]);
+
+  const all = [...(drafts || []), ...(published || [])];
+  const titleLower = title.toLowerCase();
+  const similar = all.filter(
+    (a) => a.title && a.title.toLowerCase().trim() === titleLower
+  );
+
+  if (similar.length === 0) {
+    console.log(`OK: No existing article with title "${title}".`);
+    return [];
+  }
+
+  console.log(`DUPLICATE: Found ${similar.length} existing article(s) with title "${title}":\n`);
+  for (const a of similar) {
+    const status = a.published ? "Published" : "Draft";
+    console.log(`  #${a.id} [${status}] ${a.title}`);
+    console.log(`    ${a.url}`);
+    console.log(`    Edit: ${a.url}/edit`);
+  }
+  console.log("\nUse 'update <id> <file.md>' to update an existing article, or rename the title.");
+  return similar;
+}
+
+function cmdPreview(filePath: string) {
+  if (!filePath) {
+    console.error("Usage: devto-api.ts preview <file.md>");
+    process.exit(1);
+  }
+
+  const raw = readFileSync(resolve(filePath), "utf-8");
+  const { data: fm, content } = matter(raw);
+
+  const title = extractTitle(content, fm.title);
+  const tags = validateTags(fm.tags || []);
+  const published = fm.published === true;
+  const description = fm.description || "(not set)";
+  const series = fm.series || "(not set)";
+  const coverImage = fm.cover_image || fm.main_image || "(not set)";
+  const canonicalUrl = fm.canonical_url || "(not set)";
+
+  // Detect local images in body
+  const localImages: string[] = [];
+  const imgRegex = /!\[.*?\]\(((?!https?:\/\/)[^\)]+)\)/g;
+  let match;
+  while ((match = imgRegex.exec(content)) !== null) {
+    localImages.push(match[1]);
+  }
+  if (coverImage !== "(not set)" && !coverImage.startsWith("http")) {
+    localImages.unshift(`[cover_image] ${coverImage}`);
+  }
+
+  console.log("=== Metadata Preview ===\n");
+  console.log(`  Title:       ${title}`);
+  console.log(`  Tags:        ${tags.join(", ") || "(none)"}`);
+  console.log(`  Description: ${description}`);
+  console.log(`  Published:   ${published ? "YES (will be public)" : "No (draft)"}`);
+  console.log(`  Series:      ${series}`);
+  console.log(`  Cover:       ${coverImage}`);
+  console.log(`  Canonical:   ${canonicalUrl}`);
+  console.log(`  Body:        ${content.split("\n").length} lines`);
+
+  if (localImages.length > 0) {
+    console.log(`\n  ⚠ Local images detected (Dev.to needs public URLs):`);
+    for (const img of localImages) {
+      console.log(`    - ${img}`);
+    }
+    console.log(`\n  These will appear as broken images. Upload them to a hosting service`);
+    console.log(`  or use GitHub raw URLs (git remote + branch + path).`);
+  }
+
+  if (tags.length === 0) {
+    console.log(`\n  ⚠ No tags set. Dev.to allows up to 4 tags for discoverability.`);
+  }
+
+  if (description === "(not set)") {
+    console.log(`\n  ⚠ No description. Recommended for SEO and social previews.`);
+  }
+}
+
 // Main
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -276,6 +378,12 @@ switch (cmd) {
   case "unpublish":
     await cmdUnpublish(args.slice(1));
     break;
+  case "dedupe-title":
+    await cmdDedupeTitle(args.slice(1));
+    break;
+  case "preview":
+    cmdPreview(args.slice(1).find((a) => !a.startsWith("-")) || "");
+    break;
   default:
     console.error("Usage: devto-api.ts <command> [options]");
     console.error("\nCommands:");
@@ -284,5 +392,7 @@ switch (cmd) {
     console.error("  list [--published] [--draft] [--per-page <n>]");
     console.error("  publish <article_id>");
     console.error("  unpublish <article_id>");
+    console.error("  dedupe-title <file.md>");
+    console.error("  preview <file.md>");
     process.exit(1);
 }

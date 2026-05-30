@@ -6,26 +6,15 @@
  * Usage: bun scripts/check-token.ts
  */
 
+import { getToken } from "./token";
+
 const API_BASE = "https://dev.to/api";
 
 async function main() {
-  const token = process.env.DEVTO_TOKEN;
+  const token = getToken();
 
   console.log("=== Dev.to Token Check ===\n");
-
-  if (!token) {
-    console.log("FAIL: DEVTO_TOKEN environment variable is not set.\n");
-    console.log("To fix:");
-    console.log("  1. Go to https://dev.to/settings/extensions");
-    console.log('  2. Generate a new API key under "DEV Community API Keys"');
-    console.log("  3. Add to your shell profile:");
-    console.log('     export DEVTO_TOKEN="your_key_here"');
-    console.log("\n  Or add to .peng-skills/.env:");
-    console.log("     DEVTO_TOKEN=your_key_here");
-    process.exit(1);
-  }
-
-  console.log("OK: DEVTO_TOKEN is set.");
+  console.log("OK: DEVTO_TOKEN resolved.");
 
   try {
     const res = await fetch(`${API_BASE}/articles/me?per_page=1`, {
@@ -50,8 +39,15 @@ async function main() {
       console.log(`WARN: Unexpected response (${res.status}). Token may still be valid.`);
     }
   } catch (err) {
-    console.log("WARN: Could not reach Dev.to API. Check your network connection.");
-    console.log(`  Error: ${err instanceof Error ? err.message : String(err)}`);
+    console.log("FAIL: Could not reach Dev.to API.\n");
+    console.log("Possible causes:");
+    console.log("  - No network connection");
+    console.log("  - Sandbox/network restriction blocking dev.to");
+    console.log("  - DNS resolution failure");
+    console.log(`\nError: ${err instanceof Error ? err.message : String(err)}`);
+    console.log("\nTo fix:");
+    console.log("  - Check your internet connection");
+    console.log("  - If in a sandboxed environment, ensure outbound HTTPS is allowed");
     process.exit(1);
   }
 }
