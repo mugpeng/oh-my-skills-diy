@@ -10,3 +10,4 @@
 # macOS
 .DS_Store
 /peng-post-to-x-thread/scripts/node_modules
+/peng-post-to-medium/scripts/node_modules
