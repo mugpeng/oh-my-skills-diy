@@ -1,11 +1,11 @@
 ---
 name: peng-post-to-hackernews
-description: Posts URL stories to Hacker News from Markdown. Uses Chrome + CDP browser automation with env-based auth (HN_USERNAME / HN_PASSWORD). Supports preview mode (fill form) and auto-submit. Use when user asks to "post to Hacker News", "submit to HN", "share on Hacker News", or provides a markdown file for HN submission.
+description: Posts URL stories to Hacker News from Markdown. Uses curl-based HTTP authentication (no browser required). Supports preview mode (verify session) and auto-submit. Use when user asks to "post to Hacker News", "submit to HN", "share on Hacker News", or provides a markdown file for HN submission.
 ---
 
 # Post to Hacker News
 
-Post a URL story to Hacker News from a Markdown file using Chrome + CDP browser automation.
+Post a URL story to Hacker News from a Markdown file using curl-based HTTP authentication. No browser required — works entirely via HTTP requests.
 
 ## Script Directory
 
@@ -18,8 +18,8 @@ Post a URL story to Hacker News from a Markdown file using Chrome + CDP browser 
 
 ## Prerequisites
 
-- Google Chrome or Chromium installed
 - `bun` runtime (`brew install oven-sh/bun/bun`)
+- `curl` (usually pre-installed)
 - Environment variables set:
   - `HN_USERNAME` — your Hacker News username
   - `HN_PASSWORD` — your Hacker News password
@@ -30,8 +30,8 @@ Post a URL story to Hacker News from a Markdown file using Chrome + CDP browser 
 |----------|----------|-------------|
 | `HN_USERNAME` | Yes | Hacker News account username |
 | `HN_PASSWORD` | Yes | Hacker News account password |
-| `HN_CHROME_PATH` | No | Custom Chrome executable path |
-| `HN_CHROME_PROFILE_DIR` | No | Custom Chrome profile directory |
+| `HN_PROXY` | No | HTTP proxy URL (e.g. `http://127.0.0.1:7890`) |
+| `HN_CHROME_PATH` | No | Chrome executable path (for profile detection only) |
 
 Set them in your shell:
 
@@ -72,7 +72,7 @@ ${BUN_X} {baseDir}/scripts/md-to-hn.ts <file.md>
 ${BUN_X} {baseDir}/scripts/hn-post.ts <file.md>
 ```
 
-Opens Chrome, logs in (if needed), navigates to the submit page, and fills the form. **Does not submit.** You review and can manually click submit in the browser.
+Verifies your HN session (logs in if needed), fetches the submit form, and confirms credentials are valid. **Does not submit.** You can then manually submit via the browser.
 
 ### Auto-submit
 
@@ -80,7 +80,7 @@ Opens Chrome, logs in (if needed), navigates to the submit page, and fills the f
 ${BUN_X} {baseDir}/scripts/hn-post.ts <file.md> --submit
 ```
 
-Fills the form and submits automatically. Waits for confirmation redirect.
+Logs in (if needed), fetches the CSRF token (`fnid`), and submits the story automatically. Reports the posted item URL.
 
 ### With options
 
@@ -95,8 +95,8 @@ ${BUN_X} {baseDir}/scripts/hn-post.ts <file.md> --submit --chrome /path/to/chrom
 |-----------|-------------|
 | `<file.md>` | Markdown file with frontmatter (required) |
 | `--submit` | Submit automatically (default: preview mode) |
-| `--profile <dir>` | Chrome profile directory |
-| `--chrome <path>` | Chrome executable path |
+| `--profile <dir>` | Cookies/profile directory (default: `~/.baoyu-skills/hn-profile`) |
+| `--chrome <path>` | Chrome executable path (for profile detection) |
 
 ## Workflow
 
@@ -104,13 +104,12 @@ ${BUN_X} {baseDir}/scripts/hn-post.ts <file.md> --submit --chrome /path/to/chrom
 1. Parse markdown: extract title and url from frontmatter
 2. Validate: check title length, URL validity
 3. Check HN_USERNAME and HN_PASSWORD env vars
-4. Launch Chrome with CDP (or reuse existing)
-5. Navigate to HN submit page
-6. If not logged in: navigate to login, fill credentials, submit
-7. Fill submit form: title + url
-8. If preview mode: stop, let user review
-9. If --submit: click submit, wait for redirect to item page
-10. Report result (post URL or error)
+4. Check for existing session cookies (skip login if valid)
+5. If no valid session: POST to /login with credentials, save cookies
+6. GET /submit to retrieve fnid (CSRF token)
+7. If preview mode: stop, report session status
+8. If --submit: POST to /r with fnid + title + url
+9. Report result (post URL or error)
 ```
 
 ## Troubleshooting
@@ -119,15 +118,14 @@ ${BUN_X} {baseDir}/scripts/hn-post.ts <file.md> --submit --chrome /path/to/chrom
 |-------|-----|
 | `HN_USERNAME not set` | `export HN_USERNAME="your_username"` |
 | `HN_PASSWORD not set` | `export HN_PASSWORD="your_password"` |
-| `Chrome not found` | Set `HN_CHROME_PATH` or install Chrome |
-| `Login failed` | Check credentials; try manual login first |
-| `Submit form not found` | HN page may have changed; check browser |
-| `Submission failed` | Check `.err` message in browser; duplicate URL? |
-| `Chrome lock error` | Kill stale Chrome: `pkill -f "Chrome.*ycombinator"` |
+| `Login failed` | Check credentials; password may have changed |
+| `This URL has already been posted` | HN does not allow duplicate URL submissions |
+| `Could not retrieve fnid` | Session expired; delete cookies file and retry |
+| `Submission failed` | Check `.err` message in response; may need to re-login |
 
 ## Notes
 
-- First run: Chrome will open and you may need to verify login in the browser
-- Session cookies persist in the Chrome profile for subsequent runs
-- Only URL posts are supported (not text posts like Ask HN)
-- Cross-platform: macOS, Linux, Windows
+- Session cookies are persisted in the profile directory for subsequent runs
+- HN does not allow posting the same URL twice — check if already submitted
+- Only URL posts are supported (not text posts like Ask HN / Show HN)
+- Cross-platform: macOS, Linux, Windows (requires curl)

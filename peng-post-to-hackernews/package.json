@@ -1,7 +1,6 @@
 {
   "type": "module",
   "dependencies": {
-    "baoyu-chrome-cdp": "^0.1.1",
     "gray-matter": "^4.0.3"
   }
 }

@@ -16,7 +16,7 @@ auto_submit: false
 |-------|------|----------|---------|-------------|
 | `title` | string | Yes | — | Post title (max 200 chars recommended) |
 | `url` | string | Yes | — | External URL to submit |
-| `auto_submit` | boolean | No | `false` | `true` = submit automatically; `false` = preview mode (fill form only) |
+| `auto_submit` | boolean | No | `false` | `true` = submit automatically; `false` = preview mode (verify session only) |
 
 ## URL Posts Only
 
