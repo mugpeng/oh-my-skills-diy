@@ -13,10 +13,10 @@ Publish articles to Medium via Playwright browser automation. Medium's API is de
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/session.ts` | Cookie/session management (save/load to ~/.peng-skills/) |
+| `scripts/session.ts` | Chrome profile detection (default profile path) |
 | `scripts/md-to-html.ts` | Parse Markdown + frontmatter, convert body to HTML |
-| `scripts/medium-publish.ts` | Main script: login, publish, preview |
-| `scripts/check-session.ts` | Verify saved session is still valid |
+| `scripts/medium-publish.ts` | Main script: publish, preview, login (fallback) |
+| `scripts/check-session.ts` | Verify Chrome profile has Medium session |
 
 ## Preferences (EXTEND.md)
 
@@ -54,7 +54,7 @@ ls {baseDir}/scripts/node_modules/playwright/package.json
 If missing:
 
 ```bash
-cd {baseDir}/scripts && bun install && npx playwright install chromium
+cd {baseDir}/scripts && bun install
 ```
 
 If `bun` is not installed: `brew install oven-sh/bun/bun` or `npm install -g bun`.
@@ -65,15 +65,15 @@ If `bun` is not installed: `brew install oven-sh/bun/bun` or `npm install -g bun
 ${BUN_X} {baseDir}/scripts/check-session.ts
 ```
 
-Session cookies are saved to `~/.peng-skills/medium-cookies.json`.
+**Primary mode**: Uses your default Chrome profile — if you're logged into Medium in Chrome, no extra setup needed.
 
-If session is missing or expired, run:
+**Fallback mode**: If Chrome is running (profile locked), uses a saved session at `~/.peng-skills/medium-chrome-profile/`. Run `login` to create one:
 
 ```bash
 ${BUN_X} {baseDir}/scripts/medium-publish.ts login
 ```
 
-This opens a browser window. Log in to Medium manually, then press Enter in the terminal to save the session.
+This opens Chrome with a separate profile. Log in to Medium, then close the browser.
 
 ### 3. Local Images
 
@@ -203,14 +203,15 @@ For edits or deletions, direct the user to the Medium editor URL.
 
 | Issue | Recovery |
 |-------|----------|
-| `playwright` not found / module error | `cd {baseDir}/scripts && bun install && npx playwright install chromium` |
+| `playwright` not found / module error | `cd {baseDir}/scripts && bun install` |
 | `bun` not found | `brew install oven-sh/bun/bun` or `npm install -g bun` |
-| Session expired | `bun scripts/medium-publish.ts login` — re-login in browser |
-| Login page shown | Complete login in browser, then press Enter in terminal |
+| Chrome profile locked | Close Chrome, or use `login` to create a separate session |
+| Not logged in | Log in to Chrome normally (medium.com), then retry |
+| Login page shown after publish | Session expired. Close Chrome, run `login`, or re-login in Chrome |
 | Tags not applied | Medium editor UI may have changed; tags are best-effort |
 | Content not pasted | Medium editor may reject pasted HTML; try shorter content |
 | Images broken | All images need public URLs. Push to git repo and use raw.githubusercontent.com |
-| Browser won't launch | Run `npx playwright install chromium` to install browser binary |
+| Browser won't launch | Chrome must be installed. Playwright uses system Chrome via `channel: 'chrome'` |
 | Headless mode fails | Some actions require headful mode; try `login` first to refresh session |
 
 ## References

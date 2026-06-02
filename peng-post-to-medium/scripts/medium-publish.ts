@@ -3,50 +3,97 @@
 /**
  * Medium publishing via Playwright browser automation.
  *
+ * Uses system Chrome with default profile — no separate login needed.
+ * If Chrome is running, falls back to a temp profile (requires manual login).
+ *
  * Usage:
- *   bun scripts/medium-publish.ts login               # Log in and save session
  *   bun scripts/medium-publish.ts publish <file.md>   # Publish a post
  *   bun scripts/medium-publish.ts preview <file.md>   # Preview metadata
+ *   bun scripts/medium-publish.ts login               # Fallback: manual login
  */
 
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync, existsSync, mkdirSync } from "fs";
+import { resolve, join } from "path";
 import { chromium } from "playwright";
-import { sessionExists, saveSession, loadSession } from "./session";
+import { getDefaultChromeProfileDir, hasDefaultChromeProfile } from "./session";
 import { parseMarkdown } from "./md-to-html";
 
-// ─── Login ───────────────────────────────────────────────────────────
+const STORAGE_STATE_PATH = join(
+  process.env.HOME || "~",
+  ".peng-skills",
+  "medium-storage-state.json"
+);
+
+const TEMP_PROFILE_DIR = join(
+  process.env.HOME || "~",
+  ".peng-skills",
+  "medium-chrome-profile"
+);
+
+// ─── Browser launch helpers ──────────────────────────────────────────
+
+/**
+ * Launch Chrome with the default profile (headful).
+ * Fails if Chrome is already running with the same profile.
+ */
+async function launchWithDefaultProfile(headless: boolean) {
+  const profileDir = getDefaultChromeProfileDir();
+  if (!hasDefaultChromeProfile()) {
+    console.error(`Chrome profile not found at:\n  ${profileDir}\n`);
+    console.error("Install Chrome or use 'login' with a temp profile.");
+    process.exit(1);
+  }
+
+  try {
+    const context = await chromium.launchPersistentContext(profileDir, {
+      channel: "chrome",
+      headless,
+    });
+    return context;
+  } catch (err: any) {
+    if (err?.message?.includes("user data directory is already in use")) {
+      console.error("Chrome is already running with the same profile.\n");
+      console.error("Options:");
+      console.error("  1. Close Chrome and retry");
+      console.error("  2. Use 'login' to create a separate session");
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+// ─── Login (fallback) ────────────────────────────────────────────────
 
 async function cmdLogin() {
   console.log("Opening Medium login page...\n");
   console.log("Steps:");
   console.log("  1. Log in to Medium in the browser window");
-  console.log("  2. Once logged in, come back here and press Enter");
+  console.log("  2. Once logged in, close the browser window");
   console.log();
 
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  // Use a temp profile directory for the fallback session
+  const tempProfile = join(
+    process.env.HOME || "~",
+    ".peng-skills",
+    "medium-chrome-profile"
+  );
 
-  await page.goto("https://medium.com/m/signin", { waitUntil: "domcontentloaded" });
-
-  // Wait for user to press Enter in terminal
-  console.log("Waiting for you to log in... (press Enter when done)");
-  await new Promise<void>((resolve) => {
-    process.stdin.once("data", () => resolve());
+  const context = await chromium.launchPersistentContext(tempProfile, {
+    channel: "chrome",
+    headless: false,
   });
 
-  // Check if actually logged in
-  const url = page.url();
-  if (url.includes("/signin") || url.includes("/oauth")) {
-    console.log("\nWARNING: You still appear to be on the login page.");
-    console.log("Make sure you complete the login before pressing Enter.");
-    console.log("Session will be saved anyway — you can re-run 'login' if needed.\n");
-  }
+  const page = context.pages()[0] || await context.newPage();
+  await page.goto("https://medium.com/m/signin", { waitUntil: "domcontentloaded" });
 
-  await saveSession(context);
-  await browser.close();
-  console.log("\nDone! You can now use 'publish' to post articles.");
+  console.log("Waiting for you to log in... (close the browser when done)");
+
+  // Wait for the browser to close
+  await new Promise<void>((resolve) => {
+    context.on("close", () => resolve());
+  });
+
+  console.log("\nSession saved! You can now use 'publish' to post articles.");
 }
 
 // ─── Publish ─────────────────────────────────────────────────────────
@@ -76,16 +123,42 @@ async function cmdPublish(args: string[]) {
   console.log(`  Tags:   ${post.tags.join(", ") || "none"}`);
   console.log(`  Status: ${post.publishStatus}`);
 
-  if (!sessionExists()) {
-    console.error("\nNo saved session. Run 'login' first:");
-    console.error("  bun scripts/medium-publish.ts login");
-    process.exit(1);
+  // Try default Chrome profile first; fall back to temp profile
+  let context;
+  let usingDefaultProfile = false;
+
+  if (hasDefaultChromeProfile()) {
+    try {
+      context = await launchWithDefaultProfile(false);
+      usingDefaultProfile = true;
+    } catch {
+      // Fall through to temp profile
+    }
   }
 
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  await loadSession(context);
-  const page = await context.newPage();
+  if (!context) {
+    // Ensure temp profile directory exists
+    if (!existsSync(TEMP_PROFILE_DIR)) {
+      mkdirSync(TEMP_PROFILE_DIR, { recursive: true });
+    }
+
+    // Check if we have saved storage state from Chrome profile
+    if (existsSync(STORAGE_STATE_PATH)) {
+      console.log("Using saved login session...");
+      context = await chromium.launchPersistentContext(TEMP_PROFILE_DIR, {
+        channel: "chrome",
+        headless: false,
+        storageState: STORAGE_STATE_PATH,
+      });
+    } else {
+      context = await chromium.launchPersistentContext(TEMP_PROFILE_DIR, {
+        channel: "chrome",
+        headless: false,
+      });
+    }
+  }
+
+  const page = context.pages()[0] || await context.newPage();
 
   // Navigate to new story
   const storyUrl = post.publicationId
@@ -97,9 +170,10 @@ async function cmdPublish(args: string[]) {
 
   // Check if redirected to login
   if (page.url().includes("/signin") || page.url().includes("/oauth")) {
-    console.error("\nSession expired. Please log in again:");
-    console.error("  bun scripts/medium-publish.ts login");
-    await browser.close();
+    console.error("\nNot logged in. Options:");
+    console.error("  1. Log in to Chrome normally and retry");
+    console.error("  2. Run 'login' to create a separate session");
+    await context.close();
     process.exit(1);
   }
 
@@ -132,11 +206,9 @@ async function cmdPublish(args: string[]) {
 
   // ── Set tags ──
   if (post.tags.length > 0) {
-    // Scroll to bottom to find the publish/settings area
     await page.keyboard.press("Control+End");
     await page.waitForTimeout(500);
 
-    // Look for tag input area
     const tagInput = page.locator('[data-testid="tagInput"], input[placeholder*="tag"], input[placeholder*="Tag"], .js-tagInput').first();
     const tagInputVisible = await tagInput.isVisible().catch(() => false);
 
@@ -147,7 +219,6 @@ async function cmdPublish(args: string[]) {
         await page.waitForTimeout(300);
       }
     } else {
-      // Try clicking a "Add tag" button first
       const addTagBtn = page.locator('button:has-text("Add a tag"), button:has-text("Add tag"), [data-testid="addTag"]').first();
       const btnVisible = await addTagBtn.isVisible().catch(() => false);
       if (btnVisible) {
@@ -165,17 +236,14 @@ async function cmdPublish(args: string[]) {
 
   // ── Publish or save as draft ──
   if (post.publishStatus === "draft") {
-    // Save as draft — click "Save" or use Ctrl+S
     await page.keyboard.press("Control+s");
     await page.waitForTimeout(2000);
     console.log("\nSaved as DRAFT.");
   } else {
-    // Click Publish button
     const publishBtn = page.locator('button:has-text("Publish"), button:has-text("Publish…"), [data-testid="publishButton"]').first();
     await publishBtn.click();
     await page.waitForTimeout(1000);
 
-    // Confirm publish dialog if it appears
     const confirmBtn = page.locator('button:has-text("Publish now"), button:has-text("Publish and share"), [data-testid="confirmPublish"]').first();
     const confirmVisible = await confirmBtn.isVisible().catch(() => false);
     if (confirmVisible) {
@@ -186,19 +254,19 @@ async function cmdPublish(args: string[]) {
     console.log("\nPublished!");
   }
 
-  // Try to get the URL
   const finalUrl = page.url();
   console.log(`\nMedium Post Created!`);
-  console.log(`  Title:  ${post.title}`);
-  console.log(`  URL:    ${finalUrl}`);
-  console.log(`  Status: ${post.publishStatus}`);
+  console.log(`  Title:   ${post.title}`);
+  console.log(`  URL:     ${finalUrl}`);
+  console.log(`  Status:  ${post.publishStatus}`);
+  console.log(`  Profile: ${usingDefaultProfile ? "Chrome default" : "saved session"}`);
 
   if (post.publishStatus === "draft") {
     console.log(`\n  This is a DRAFT — it is NOT publicly visible.`);
     console.log(`  Edit it on Medium to publish.`);
   }
 
-  await browser.close();
+  await context.close();
 }
 
 // ─── Preview ─────────────────────────────────────────────────────────
@@ -211,7 +279,6 @@ function cmdPreview(filePath: string) {
 
   const post = parseMarkdown(filePath);
 
-  // Detect local images in the original file
   const raw = readFileSync(resolve(filePath), "utf-8");
   const localImages: string[] = [];
   const imgRegex = /!\[.*?\]\(((?!https?:\/\/)[^\)]+)\)/g;
@@ -258,8 +325,8 @@ switch (cmd) {
   default:
     console.error("Usage: medium-publish.ts <command> [options]");
     console.error("\nCommands:");
-    console.error("  login                            Log in and save session");
     console.error("  publish <file.md> [--publish|--draft|--unlisted] [--pub <id>]");
     console.error("  preview <file.md>                Preview metadata");
+    console.error("  login                            Fallback: manual login with temp profile");
     process.exit(1);
 }

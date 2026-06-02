@@ -1,66 +1,84 @@
 #!/usr/bin/env bun
 
 /**
- * Verify that the saved Medium session is still valid.
+ * Verify that the Medium session is available.
+ *
+ * Checks in order:
+ *   1. Default Chrome profile (if Chrome not running)
+ *   2. Saved temp profile (~/.peng-skills/medium-chrome-profile/)
  *
  * Usage: bun scripts/check-session.ts
  */
 
+import { existsSync } from "fs";
+import { join } from "path";
 import { chromium } from "playwright";
-import { sessionExists, loadSession } from "./session";
+import { getDefaultChromeProfileDir, hasDefaultChromeProfile } from "./session";
+
+async function checkProfile(profileDir: string, label: string): Promise<boolean> {
+  try {
+    const context = await chromium.launchPersistentContext(profileDir, {
+      channel: "chrome",
+      headless: true,
+    });
+    const page = context.pages()[0] || await context.newPage();
+    await page.goto("https://medium.com/me/stories", { waitUntil: "domcontentloaded" });
+
+    const url = page.url();
+    const loggedIn = !url.includes("/signin") && !url.includes("/oauth");
+
+    await context.close();
+    return loggedIn;
+  } catch (err: any) {
+    if (err?.message?.includes("user data directory is already in use")) {
+      console.log(`  ⚠ Chrome is running — cannot check ${label} profile`);
+      return false;
+    }
+    return false;
+  }
+}
 
 async function main() {
   console.log("=== Medium Session Check ===\n");
 
-  if (!sessionExists()) {
-    console.log("FAIL: No saved session found.\n");
-    console.log("To fix:");
-    console.log("  bun scripts/medium-publish.ts login");
-    process.exit(1);
-  }
-
-  console.log("OK: Session file found.");
-
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  await loadSession(context);
-
-  const page = await context.newPage();
-  await page.goto("https://medium.com/me/stories", { waitUntil: "domcontentloaded" });
-
-  // If redirected to login, session is expired
-  const url = page.url();
-  if (url.includes("/signin") || url.includes("/oauth")) {
-    console.log("FAIL: Session expired. Please log in again.\n");
-    console.log("To fix:");
-    console.log("  bun scripts/medium-publish.ts login");
-    await browser.close();
-    process.exit(1);
-  }
-
-  // Check for user-specific elements
-  const hasAvatar = await page.locator("img[alt*='avatar'], img[alt*='Avatar'], [data-testid='headerUserAvatar']").first().isVisible().catch(() => false);
-  const hasMenu = await page.locator("[data-testid='headerUserMenu'], .avatar, .js-avatar").first().isVisible().catch(() => false);
-
-  if (hasAvatar || hasMenu) {
-    console.log("OK: Session is valid. Logged in to Medium.\n");
-    console.log("All checks passed. Ready to publish!");
-  } else {
-    // Might still be logged in, check the page content
-    const bodyText = await page.textContent("body").catch(() => "");
-    if (bodyText && !bodyText.includes("Sign in") && !bodyText.includes("Sign In")) {
-      console.log("OK: Session appears valid.\n");
+  // Check 1: Default Chrome profile
+  if (hasDefaultChromeProfile()) {
+    const dir = getDefaultChromeProfileDir();
+    console.log(`Checking default Chrome profile:\n  ${dir}`);
+    const loggedIn = await checkProfile(dir, "default Chrome");
+    if (loggedIn) {
+      console.log("OK: Logged in via default Chrome profile.\n");
       console.log("All checks passed. Ready to publish!");
-    } else {
-      console.log("FAIL: Session may be expired. Please log in again.\n");
-      console.log("To fix:");
-      console.log("  bun scripts/medium-publish.ts login");
-      await browser.close();
-      process.exit(1);
+      return;
     }
+    console.log("  Not logged in to Medium in Chrome profile.\n");
+  } else {
+    console.log("No default Chrome profile found.\n");
   }
 
-  await browser.close();
+  // Check 2: Saved temp profile
+  const tempProfile = join(
+    process.env.HOME || "~",
+    ".peng-skills",
+    "medium-chrome-profile"
+  );
+  if (existsSync(tempProfile)) {
+    console.log(`Checking saved session profile:\n  ${tempProfile}`);
+    const loggedIn = await checkProfile(tempProfile, "saved session");
+    if (loggedIn) {
+      console.log("OK: Logged in via saved session.\n");
+      console.log("All checks passed. Ready to publish!");
+      return;
+    }
+    console.log("  Saved session expired.\n");
+  }
+
+  // Neither works
+  console.log("FAIL: No valid session found.\n");
+  console.log("To fix:");
+  console.log("  Option 1: Log in to Chrome normally and use it directly");
+  console.log("  Option 2: Run 'bun scripts/medium-publish.ts login' for a separate session");
+  process.exit(1);
 }
 
 main();
