@@ -12,8 +12,8 @@
  *   bun scripts/medium-publish.ts login               # Fallback: manual login
  */
 
-import { readFileSync, existsSync, mkdirSync } from "fs";
-import { resolve, join } from "path";
+import { readFileSync, existsSync, mkdirSync, copyFileSync, writeFileSync } from "fs";
+import { resolve, join, dirname, basename, extname } from "path";
 import { chromium } from "playwright";
 import { getDefaultChromeProfileDir, hasDefaultChromeProfile } from "./session";
 import { parseMarkdown } from "./md-to-html";
@@ -307,6 +307,79 @@ function cmdPreview(filePath: string) {
   }
 }
 
+// ─── Media Export ────────────────────────────────────────────────────
+
+function cmdMedia(args: string[]) {
+  const fileIdx = args.findIndex((a) => !a.startsWith("-"));
+  const filePath = args[fileIdx];
+  if (!filePath) {
+    console.error("Usage: medium-publish.ts media <file.md> --out <dir>");
+    process.exit(1);
+  }
+
+  const outIdx = args.indexOf("--out");
+  const outDir = outIdx !== -1 ? args[outIdx + 1] : undefined;
+  if (!outDir) {
+    console.error("Error: --out <directory> is required");
+    process.exit(1);
+  }
+
+  const raw = readFileSync(resolve(filePath), "utf-8");
+  const imgRegex = /!\[(.*?)\]\(((?!https?:\/\/)[^\)]+)\)/g;
+
+  // Extract local image paths
+  const localImages: { mdPath: string; resolvedPath: string; fileName: string }[] = [];
+  let match;
+  const baseDir = dirname(resolve(filePath));
+
+  while ((match = imgRegex.exec(raw)) !== null) {
+    const mdPath = match[2];
+    const resolved = resolve(baseDir, mdPath);
+    const fileName = basename(mdPath);
+    localImages.push({ mdPath, resolvedPath: resolved, fileName });
+  }
+
+  // Create output directory
+  mkdirSync(outDir, { recursive: true });
+
+  // Generate clean markdown with GitHub raw URLs (no image copy needed)
+  let cleanMd = raw;
+  for (const img of localImages) {
+    if (existsSync(img.resolvedPath)) {
+      const rawUrl = `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/${img.fileName}`;
+      cleanMd = cleanMd.replace(img.mdPath, rawUrl);
+    } else {
+      console.warn(`  ⚠ Not found: ${img.mdPath} (resolved: ${img.resolvedPath})`);
+    }
+  }
+
+  // Write clean markdown (same name in outDir)
+  const outMdPath = join(outDir, basename(filePath));
+  writeFileSync(outMdPath, cleanMd, "utf-8");
+
+  // Write manifest (for reference only)
+  const manifest = {
+    source: filePath,
+    outputDir: outDir,
+    images: localImages.map((img) => ({
+      original: img.mdPath,
+      fileName: img.fileName,
+      rawUrl: `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/${img.fileName}`,
+      exists: existsSync(img.resolvedPath),
+    })),
+  };
+  const manifestPath = join(outDir, "media-manifest.json");
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+
+  console.log(`\nExported to: ${outDir}`);
+  console.log(`  Clean markdown: ${basename(filePath)}`);
+  console.log(`  Images:         ${localImages.length} (URLs only, no copy)`);
+  console.log(`\nNext steps:`);
+  console.log(`  1. Replace <owner>/<repo>/<branch> with your GitHub repo`);
+  console.log(`  2. Push images to your repo (or they're already there)`);
+  console.log(`  3. Use the clean markdown for publishing`);
+}
+
 // ─── Main ────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -322,11 +395,15 @@ switch (cmd) {
   case "preview":
     cmdPreview(args.slice(1).find((a) => !a.startsWith("-")) || "");
     break;
+  case "media":
+    cmdMedia(args.slice(1));
+    break;
   default:
     console.error("Usage: medium-publish.ts <command> [options]");
     console.error("\nCommands:");
     console.error("  publish <file.md> [--publish|--draft|--unlisted] [--pub <id>]");
     console.error("  preview <file.md>                Preview metadata");
+    console.error("  media   <file.md> --out <dir>    Export images + clean markdown");
     console.error("  login                            Fallback: manual login with temp profile");
     process.exit(1);
 }

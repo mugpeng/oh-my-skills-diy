@@ -15,7 +15,7 @@ Publish articles to Medium via Playwright browser automation. Medium's API is de
 |--------|---------|
 | `scripts/session.ts` | Chrome profile detection (default profile path) |
 | `scripts/md-to-html.ts` | Parse Markdown + frontmatter, convert body to HTML |
-| `scripts/medium-publish.ts` | Main script: publish, preview, login (fallback) |
+| `scripts/medium-publish.ts` | Main script: publish, preview, media, login (fallback) |
 | `scripts/check-session.ts` | Verify Chrome profile has Medium session |
 
 ## Preferences (EXTEND.md)
