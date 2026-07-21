@@ -1,0 +1,139 @@
+---
+name: awedot-release
+description: >
+  Awedot desktop app release workflow. Use when the user mentions "release", "publish",
+  "tag", "build DMG", "version bump", "changelog", "merge to main",
+  or needs to sync versions, update CHANGELOG, create GitHub Releases, or build the DMG.
+  Covers the full release flow across the awedot / awedot-source / awedot-dev repos.
+---
+
+# Awedot Release
+
+Four phases. Pause for user confirmation between each phase.
+
+## Repo Definitions
+
+| Repo | Path | Branches | Role |
+|------|------|----------|------|
+| awedot-dev | `product/awedot/awedot-dev` | main | Backend service (CLI + Supabase Edge Functions) |
+| awedot-source | `product/awedot/awedot-source` | dev / main | Tauri desktop app source |
+| awedot | `product/awedot/awedot` | main | Website / CHANGELOG / version.json / GitHub Releases |
+
+The user can trigger a release from any repo context; the skill locates all three repos automatically.
+
+## Phase 1 — Version Sync
+
+Goal: unify version numbers across all repos to the new version.
+
+### 1a. Confirm new version
+
+- Read `awedot-source/package.json` to get the current version.
+- Ask the user for the new version (e.g., `0.5.3`).
+
+### 1b. Update awedot-source
+
+```bash
+cd <awedot-source>
+# 1. Edit package.json: set the "version" field
+# 2. Run sync script
+npm run sync-version
+# 3. Commit and push
+git add -A && git commit -m "chore: release vX.Y.Z"
+git push
+```
+
+`sync-version` auto-updates: `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/constants.ts`.
+
+### 1c. Update awedot
+
+```bash
+cd <awedot>
+# Edit version.json: update "version" and "filename" fields
+git add -A && git commit -m "chore: release vX.Y.Z"
+git push
+```
+
+### 1d. Update awedot-dev
+
+```bash
+cd <awedot-dev>
+# Commit and push any uncommitted changes
+git add -A && git commit && git push
+```
+
+**Pause here. Confirm with the user before proceeding to Phase 2.**
+
+## Phase 2 — Tag + Merge
+
+```bash
+cd <awedot-source>
+git tag vX.Y.Z
+git checkout main
+git merge dev
+git checkout dev
+git push origin main vX.Y.Z
+```
+
+**Pause here. Confirm with the user before proceeding to Phase 3.**
+
+## Phase 3 — Build DMG
+
+```bash
+cd <awedot-source>
+bash scripts/build-mac-universal.sh
+```
+
+Output path:
+```
+src-tauri/target/universal-apple-darwin/release/bundle/dmg/awedot_X.Y.Z_universal.dmg
+```
+
+If the DMG was already built in a previous step, skip directly to Phase 4.
+
+**Pause here. Confirm with the user before proceeding to Phase 4.**
+
+## Phase 4 — Publish GitHub Release
+
+Create a Release on the `awedot` repo:
+
+```bash
+cd <awedot>
+gh release create vX.Y.Z \
+  --repo mugpeng/awedot \
+  --title "vX.Y.Z" \
+  --notes-file /tmp/release-notes.md \
+  <path-to-dmg>
+```
+
+**Release notes source**: read the latest version entry from `awedot-source/docs/CHANGELOG.md`
+(lines between `## vX.Y.Z` and the next `##` heading).
+
+## CHANGELOG Format
+
+See [references/changelog-format.md](references/changelog-format.md) for the full spec.
+
+Quick reference:
+
+```markdown
+## vX.Y.Z — YYYY-MM-DD
+
+### Fixed
+
+- **Title**: one-line description
+
+### Features
+
+- **Title**: one-line description
+
+### Changed
+
+- **Title**: one-line description
+```
+
+## Notes
+
+- Canonical version lives in `awedot-source/package.json`; `npm run sync-version` propagates it
+- `awedot/version.json` `filename` field must match the DMG filename
+- Ensure `awedot-dev` main is pushed before starting Phase 2
+- DMG build takes ~5-8 minutes
+- `gh` CLI must be authenticated (`gh auth status`)
