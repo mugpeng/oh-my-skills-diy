@@ -12,6 +12,9 @@
 - **Path**: `product/awedot/awedot-source`
 - **Remote**: `https://github.com/mugpeng/awedot-source.git`
 - **Branches**: `dev` (development) / `main` (release)
+- **CI**: `.github/workflows/ci.yml` — runs on `main` pushes, pull requests into
+  `main`, and manual dispatch. `dev` pushes run nothing. Docs, `**.md`,
+  `.claude/**`, and `.superpowers/**` never trigger it.
 - **Version source**: `package.json` `version` field
 - **Sync script**: `npm run sync-version` → updates `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/constants.ts`
 - **CHANGELOG**: `docs/CHANGELOG.md`

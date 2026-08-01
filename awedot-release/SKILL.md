@@ -34,15 +34,25 @@ Goal: unify version numbers across all repos to the new version.
 
 ```bash
 cd <awedot-source>
-# 1. Edit package.json: set the "version" field
-# 2. Run sync script
+# 1. Run the tests — nothing on `dev` is checked by CI, and the pre-commit hook
+#    covers only Biome and tsc, so this is the last check before Phase 2.
+npm test
+# 2. Edit package.json: set the "version" field
+# 3. Run sync script
 npm run sync-version
-# 3. Commit and push
+# 4. Commit and push
 git add -A && git commit -m "chore: release vX.Y.Z"
 git push
 ```
 
 `sync-version` auto-updates: `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/constants.ts`.
+
+`npm test` runs vitest and `cargo test`, but only for this machine's platform.
+Windows has no local coverage at all — CI in Phase 2 is the only thing that
+compiles it. When the release touches `src-tauri/src/platform/windows/`,
+`transport/named_pipe.rs`, or anything else platform-specific, run the workflow
+manually on `dev` first (Actions → CI → Run workflow) rather than finding out
+during Phase 2.
 
 ### 1c. Update awedot
 
@@ -63,16 +73,32 @@ git add -A && git commit && git push
 
 **Pause here. Confirm with the user before proceeding to Phase 2.**
 
-## Phase 2 — Tag + Merge
+## Phase 2 — Merge + CI + Tag
+
+CI in awedot-source runs on `main` pushes only; pushes to `dev` trigger nothing.
+This push is therefore the release's first and only automated check, and the
+order is load-bearing: **push main, wait for green, then tag.** Tagging first
+would publish a tag for a build that may not compile.
 
 ```bash
 cd <awedot-source>
-git tag vX.Y.Z
-git checkout main
-git merge dev
+git checkout main && git merge dev
 git checkout dev
-git push origin main vX.Y.Z
+git push origin main          # triggers CI — wait for it to pass
+
+git tag vX.Y.Z main           # tag the ref CI just verified, not the branch
+git push origin vX.Y.Z
 ```
+
+Or use the script, which polls for the run, waits on it, and aborts before
+tagging if it fails:
+
+```bash
+bash scripts/tag-and-merge.sh X.Y.Z
+```
+
+If CI fails, fix it on `dev` and repeat Phase 1b then this phase. No tag was
+created, so there is nothing to retract.
 
 **Pause here. Confirm with the user before proceeding to Phase 3.**
 
@@ -137,3 +163,6 @@ Quick reference:
 - Ensure `awedot-dev` main is pushed before starting Phase 2
 - DMG build takes ~5-8 minutes
 - `gh` CLI must be authenticated (`gh auth status`)
+- awedot-source is private, so CI is billed — macOS bills at 10x and Windows at
+  2x, which is why it runs on `main` and pull requests only. A full run is
+  ~35-50 billed minutes. Phase 2 spends that once per release.
