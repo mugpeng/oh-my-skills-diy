@@ -47,12 +47,16 @@ git push
 
 `sync-version` auto-updates: `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/constants.ts`.
 
-`npm test` runs vitest and `cargo test`, but only for this machine's platform.
-Windows has no local coverage at all — CI in Phase 2 is the only thing that
-compiles it. When the release touches `src-tauri/src/platform/windows/`,
-`transport/named_pipe.rs`, or anything else platform-specific, run the workflow
-manually on `dev` first (Actions → CI → Run workflow) rather than finding out
-during Phase 2.
+`npm test` runs vitest and `cargo test`, but only for this machine's platform
+(macOS). Windows has no local coverage at all — it is compiled only by the
+manual "Rust CI (Windows, manual only)" workflow. When the release touches
+`src-tauri/src/platform/windows/`, `transport/named_pipe.rs`, or anything
+else platform-specific, trigger it on `dev` first rather than finding out
+during Phase 2:
+
+```bash
+gh workflow run "Rust CI (Windows, manual only)" --ref dev
+```
 
 ### 1c. Update awedot
 
@@ -75,10 +79,11 @@ git add -A && git commit && git push
 
 ## Phase 2 — Merge + CI + Tag
 
-CI in awedot-source runs on `main` pushes only; pushes to `dev` trigger nothing.
-This push is therefore the release's first and only automated check, and the
-order is load-bearing: **push main, wait for green, then tag.** Tagging first
-would publish a tag for a build that may not compile.
+CI in awedot-source runs on `main` pushes only (frontend job: Biome + tsc +
+vitest on ubuntu); pushes to `dev` trigger nothing. This push is therefore
+the release's only automated check, and the order is load-bearing:
+**push main, wait for green, then tag.** Tagging first would publish a tag
+for a build that may not compile.
 
 ```bash
 cd <awedot-source>
@@ -161,8 +166,8 @@ Quick reference:
 - Canonical version lives in `awedot-source/package.json`; `npm run sync-version` propagates it
 - `awedot/version.json` `filename` field must match the DMG filename
 - Ensure `awedot-dev` main is pushed before starting Phase 2
-- DMG build takes ~5-8 minutes
 - `gh` CLI must be authenticated (`gh auth status`)
-- awedot-source is private, so CI is billed — macOS bills at 10x and Windows at
-  2x, which is why it runs on `main` and pull requests only. A full run is
-  ~35-50 billed minutes. Phase 2 spends that once per release.
+- awedot-source is private, so CI is billed. `ci.yml` is frontend-only
+  (ubuntu) and runs on `main` pushes and PRs — it is cheap. `rust-ci.yml`
+  is Windows-only and manual (`workflow_dispatch`); macOS Rust is verified
+  locally by `npm test` in Phase 1b.
