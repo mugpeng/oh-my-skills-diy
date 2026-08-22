@@ -2,12 +2,14 @@
 # Bump version across awedot-source and awedot repos.
 # Usage: ./bump-version.sh <version> [awedot-source-path] [awedot-path]
 # Example: ./bump-version.sh 0.5.3
+# Note: does not sync the awedot repo's CHANGELOG.md — do that separately
+# (SKILL.md Phase 1c).
 
 set -e
 
 VERSION="$1"
-SOURCE_DIR="${2:-$(cd "$(dirname "$0")/../../../../product/awedot/awedot-source" && pwd)}"
-AWEDOT_DIR="${3:-$(cd "$(dirname "$0")/../../../../product/awedot/awedot" && pwd)}"
+SOURCE_DIR="${2:-$(cd "$(dirname "$0")/../../../../../product/awedot/awedot-source" && pwd)}"
+AWEDOT_DIR="${3:-$(cd "$(dirname "$0")/../../../../../product/awedot/awedot" && pwd)}"
 
 if [ -z "$VERSION" ]; then
   echo "Usage: $0 <version> [source-dir] [awedot-dir]"

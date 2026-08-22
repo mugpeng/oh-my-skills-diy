@@ -35,7 +35,8 @@ Goal: unify version numbers across all repos to the new version.
 ```bash
 cd <awedot-source>
 # 1. Run the tests — nothing on `dev` is checked by CI, and the pre-commit hook
-#    covers only Biome and tsc, so this is the last check before Phase 2.
+#    (Biome, tsc, cargo fmt, clippy) runs no tests, so this is the last check
+#    before Phase 2.
 npm test
 # 2. Edit package.json: set the "version" field
 # 3. Run sync script
@@ -48,24 +49,31 @@ git push
 `sync-version` auto-updates: `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/constants.ts`.
 
 `npm test` runs vitest and `cargo test`, but only for this machine's platform
-(macOS). Windows has no local coverage at all — it is compiled only by the
-manual "Rust CI (Windows, manual only)" workflow. When the release touches
-`src-tauri/src/platform/windows/`, `transport/named_pipe.rs`, or anything
-else platform-specific, trigger it on `dev` first rather than finding out
-during Phase 2:
+(macOS). Windows has no local coverage at all — it is covered by the "Rust CI"
+workflow, which runs automatically on PRs into `main` and on `main` pushes
+whenever `src-tauri/**` changes. The release flow merges locally without a
+PR, so when the release touches `src-tauri/src/platform/windows/`,
+`transport/named_pipe.rs`, or anything else platform-specific, dispatch it on
+`dev` first rather than finding out during Phase 2:
 
 ```bash
-gh workflow run "Rust CI (Windows, manual only)" --ref dev
+gh workflow run "Rust CI" --ref dev
 ```
 
 ### 1c. Update awedot
 
 ```bash
 cd <awedot>
-# Edit version.json: update "version" and "filename" fields
+# 1. Edit version.json: update "version" and "filename" fields
+# 2. Sync CHANGELOG.md: copy the new "## vX.Y.Z" entry (heading through the
+#    blank line before the next "##") from awedot-source/docs/CHANGELOG.md
+#    to just below the "# Changelog" header
 git add -A && git commit -m "chore: release vX.Y.Z"
 git push
 ```
+
+Both files change in the same release commit — that is what the actual
+`chore: release v0.7.5` commit did.
 
 ### 1d. Update awedot-dev
 
@@ -79,9 +87,10 @@ git add -A && git commit && git push
 
 ## Phase 2 — Merge + CI + Tag
 
-CI in awedot-source runs on `main` pushes only (frontend job: Biome + tsc +
-vitest on ubuntu); pushes to `dev` trigger nothing. This push is therefore
-the release's only automated check, and the order is load-bearing:
+CI in awedot-source runs on `main` pushes only (ci.yml frontend job: Biome +
+tsc + vitest on ubuntu; rust-ci.yml Windows build/lint/test when
+`src-tauri/**` changed); pushes to `dev` trigger nothing. This push is
+therefore the release's only automated check, and the order is load-bearing:
 **push main, wait for green, then tag.** Tagging first would publish a tag
 for a build that may not compile.
 
@@ -89,17 +98,20 @@ for a build that may not compile.
 cd <awedot-source>
 git checkout main && git merge dev
 git checkout dev
-git push origin main          # triggers CI — wait for it to pass
+git push origin main          # triggers CI — wait for all runs to pass
 
 git tag vX.Y.Z main           # tag the ref CI just verified, not the branch
 git push origin vX.Y.Z
 ```
 
-Or use the script, which polls for the run, waits on it, and aborts before
-tagging if it fails:
+Or use this skill's `scripts/tag-and-merge.sh`, which merges, pushes, waits
+for every CI run on that SHA (frontend, plus Windows Rust when triggered),
+and aborts before tagging if any run fails:
 
 ```bash
-bash scripts/tag-and-merge.sh X.Y.Z
+bash <skill-dir>/scripts/tag-and-merge.sh X.Y.Z
+# source path defaults to product/awedot/awedot-source; pass another path
+# as the second argument to override
 ```
 
 If CI fails, fix it on `dev` and repeat Phase 1b then this phase. No tag was
@@ -113,6 +125,9 @@ created, so there is nothing to retract.
 cd <awedot-source>
 bash scripts/build-mac-universal.sh
 ```
+
+The script also ad-hoc signs the app and injects the bilingual installation
+guides into the DMG; no extra steps are needed.
 
 Output path:
 ```
@@ -136,8 +151,9 @@ gh release create vX.Y.Z \
   <path-to-dmg>
 ```
 
-**Release notes source**: read the latest version entry from `awedot-source/docs/CHANGELOG.md`
-(lines between `## vX.Y.Z` and the next `##` heading).
+**Release notes source**: the `## vX.Y.Z` entry in `awedot/CHANGELOG.md`
+(synced in Phase 1c; mirrors `awedot-source/docs/CHANGELOG.md`) — this is
+also what this skill's `scripts/publish-release.sh` extracts.
 
 ## CHANGELOG Format
 
@@ -169,5 +185,6 @@ Quick reference:
 - `gh` CLI must be authenticated (`gh auth status`)
 - awedot-source is private, so CI is billed. `ci.yml` is frontend-only
   (ubuntu) and runs on `main` pushes and PRs — it is cheap. `rust-ci.yml`
-  is Windows-only and manual (`workflow_dispatch`); macOS Rust is verified
-  locally by `npm test` in Phase 1b.
+  runs on a Windows runner (bridge build + fmt + clippy + test) whenever
+  `src-tauri/**` changes on `main` pushes / PRs, plus manual dispatch;
+  macOS Rust is verified locally by `npm test` in Phase 1b.

@@ -5,7 +5,7 @@
 
 set -e
 
-SOURCE_DIR="${1:-$(cd "$(dirname "$0")/../../../../product/awedot/awedot-source" && pwd)}"
+SOURCE_DIR="${1:-$(cd "$(dirname "$0")/../../../../../product/awedot/awedot-source" && pwd)}"
 
 cd "$SOURCE_DIR"
 

@@ -7,7 +7,7 @@ set -e
 
 VERSION="$1"
 DMG_PATH="$2"
-AWEDOT_DIR="${3:-$(cd "$(dirname "$0")/../../../../product/awedot/awedot" && pwd)}"
+AWEDOT_DIR="${3:-$(cd "$(dirname "$0")/../../../../../product/awedot/awedot" && pwd)}"
 
 if [ -z "$VERSION" ] || [ -z "$DMG_PATH" ]; then
   echo "Usage: $0 <version> <dmg-path> [awedot-dir]"

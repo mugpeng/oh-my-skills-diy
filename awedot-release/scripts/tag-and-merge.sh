@@ -4,16 +4,17 @@
 # Example: ./tag-and-merge.sh 0.5.3
 #
 # Order matters. CI in awedot-source runs on `main` pushes only — `dev` pushes
-# trigger nothing — so this push is the release's first and only automated check.
-# Pushing main before tagging means a failed build leaves no published tag to
-# retract; the fix is just another commit on dev.
+# trigger nothing — so this push is the release's only automated check: ci.yml
+# (frontend) always, rust-ci.yml (Windows) when src-tauri changed. Pushing main
+# before tagging means a failed build leaves no published tag to retract; the
+# fix is just another commit on dev.
 #
 # Set SKIP_CI_WAIT=1 to tag without waiting, for when CI itself is unavailable.
 
 set -e
 
 VERSION="$1"
-SOURCE_DIR="${2:-$(cd "$(dirname "$0")/../../../../product/awedot/awedot-source" && pwd)}"
+SOURCE_DIR="${2:-$(cd "$(dirname "$0")/../../../../../product/awedot/awedot-source" && pwd)}"
 
 if [ -z "$VERSION" ]; then
   echo "Usage: $0 <version> [source-dir]"
@@ -37,25 +38,42 @@ if [ -n "$SKIP_CI_WAIT" ]; then
 else
   echo "==> Waiting for CI on main ($MAIN_SHA)..."
 
-  # The run takes a few seconds to register after the push, so poll for it.
-  RUN_ID=""
-  for _ in $(seq 1 20); do
-    RUN_ID="$(gh run list --branch main --limit 10 --json databaseId,headSha \
-      --jq "map(select(.headSha == \"$MAIN_SHA\")) | .[0].databaseId // empty")"
-    [ -n "$RUN_ID" ] && break
-    sleep 3
+  # A push can start more than one workflow (ci.yml always, rust-ci.yml when
+  # src-tauri changed), and `gh run watch` tracks a single run — so poll the
+  # run list instead: wait until at least one run for this SHA exists and none
+  # are still in progress, then require every completed run to be green.
+  # The re-check after the first "all done" guards against a workflow that
+  # registered a few seconds late.
+  SAW_DONE=""
+  for _ in $(seq 1 200); do
+    TOTAL="$(gh run list --branch main --limit 20 --json headSha \
+      --jq "map(select(.headSha == \"$MAIN_SHA\")) | length")"
+    if [ "${TOTAL:-0}" -gt 0 ]; then
+      RUNNING="$(gh run list --branch main --limit 20 --json headSha,status \
+        --jq "map(select(.headSha == \"$MAIN_SHA\" and .status != \"completed\")) | length")"
+      if [ "${RUNNING:-1}" -eq 0 ]; then
+        if [ -n "$SAW_DONE" ]; then
+          BAD="$(gh run list --branch main --limit 20 --json headSha,conclusion \
+            --jq "map(select(.headSha == \"$MAIN_SHA\" and .conclusion != \"success\")) | length")"
+          if [ "${BAD:-1}" -eq 0 ]; then
+            break
+          fi
+          echo "ERROR: CI failed on main ($MAIN_SHA)." >&2
+          exit 1
+        fi
+        SAW_DONE=1
+        sleep 10
+      fi
+    fi
+    sleep 5
   done
 
-  if [ -z "$RUN_ID" ]; then
-    echo "ERROR: no CI run appeared for $MAIN_SHA within 60s." >&2
+  if [ -z "$SAW_DONE" ]; then
+    echo "ERROR: no CI run appeared for $MAIN_SHA within ~17 min." >&2
     echo "  Check https://github.com/mugpeng/awedot-source/actions" >&2
     echo "  To tag without CI: SKIP_CI_WAIT=1 $0 $VERSION" >&2
     exit 1
   fi
-
-  # --exit-status turns a failed run into a non-zero exit, so `set -e` stops the
-  # script here — before any tag exists.
-  gh run watch "$RUN_ID" --exit-status
 fi
 
 # Tag `main` explicitly, not the checked-out branch: main is the ref CI verified,
