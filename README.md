@@ -8,6 +8,7 @@ Each subdirectory contains an independent skill defined in a `SKILL.md` file wit
 
 | Skill | Description |
 |-------|-------------|
+| [jiyu-laconic](jiyu-laconic/) | Laconic communication style: answer first, fewest plainest words, no detours. Bilingual (中文/English) anti-slop writing rules |
 | [peng-github-release-workflow](peng-github-release-workflow/) | GitHub release flow: dev -> main promotion, changelog, tags, and GitHub Releases |
 | [peng-cc-profiles](peng-cc-profiles/) | Create and update `cc-*` Claude Code launcher profiles using `/Users/peng/.cc-profiles/<profile>/.claude/settings.json` without replacing the caller's `HOME` |
 | [peng-crosspost-workflow](peng-crosspost-workflow/) | Coordinate Markdown articles into platform-ready drafts and publishing handoffs for WeChat, Xiaohongshu, X/Twitter, and Dev.to |
