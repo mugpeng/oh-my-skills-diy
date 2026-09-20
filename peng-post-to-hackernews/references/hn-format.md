@@ -36,7 +36,7 @@ This skill supports **URL posts** only (title + link to external content). Text 
 ```markdown
 ---
 title: "Let Your AI Agent Manage aweskill for You"
-url: "https://aweskill.webioinfo.top/articles/let-your-ai-agent-manage-aweskill-for-you/"
+url: "https://aweskill.wehuman.top/articles/let-your-ai-agent-manage-aweskill-for-you/"
 ---
 ```
 
