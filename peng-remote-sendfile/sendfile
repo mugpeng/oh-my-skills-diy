@@ -1,0 +1,131 @@
+#!/bin/bash
+set -u
+
+CHUNK_MB=128
+PORT=22
+PROG=$(basename "$0")
+
+usage() {
+  cat <<EOF
+usage: $PROG [-c CHUNK_MB] [-p PORT] <local_file> <user@host:/remote/path>
+
+Resumable, integrity-checked file transfer over ssh.
+
+  -c CHUNK_MB   chunk size in MB (default 128)
+  -p PORT       ssh port (default 22)
+
+Behavior:
+  - writes each chunk at its absolute offset (idempotent; re-running is always safe)
+  - resumes from the current remote file size after any interruption
+  - verifies sha1 of both sides after transfer
+  - on hash mismatch, scans chunk-by-chunk and rewrites only the bad chunks
+EOF
+}
+
+while getopts ":c:p:h" opt; do
+  case $opt in
+    c) CHUNK_MB=$OPTARG ;;
+    p) PORT=$OPTARG ;;
+    h) usage; exit 0 ;;
+    *) usage >&2; exit 1 ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -eq 2 ] || { usage >&2; exit 1; }
+
+SRC=$1
+SPEC=$2
+case $SPEC in
+  *:*) HOST=${SPEC%%:*}; DST=${SPEC#*:} ;;
+  *) usage >&2; exit 1 ;;
+esac
+[ -n "$HOST" ] && [ -n "$DST" ] || { usage >&2; exit 1; }
+SSH="ssh -p $PORT"
+MB=$((1024 * 1024))
+CHUNK=$((CHUNK_MB * MB))
+
+[ -f "$SRC" ] || { echo "$PROG: no such file: $SRC" >&2; exit 1; }
+SIZE=$(stat -f %z "$SRC" 2>/dev/null || stat -c %s "$SRC" 2>/dev/null)
+[ -n "$SIZE" ] || { echo "$PROG: cannot determine size of $SRC" >&2; exit 1; }
+NBLOCKS=$(( (SIZE + CHUNK - 1) / CHUNK ))
+
+log() { echo "[$(date '+%F %T')] $*"; }
+
+remote_size() { $SSH -o ConnectTimeout=10 "$HOST" "stat -c %s '$DST' 2>/dev/null || echo 0"; }
+sha1_local() { shasum -a 1 "$SRC" 2>/dev/null | awk '{print $1}' || sha1sum "$SRC" 2>/dev/null | awk '{print $1}'; }
+block_sha_local() { dd if="$SRC" bs=$CHUNK skip=$1 count=1 2>/dev/null | shasum -a 1 2>/dev/null | awk '{print $1}'; }
+block_sha_remote() { $SSH "$HOST" "tail -c +$(( $1 + 1 )) '$DST' 2>/dev/null | head -c $2 | sha1sum" | awk '{print $1}'; }
+
+send_block() {
+  local IDX=$1
+  local OFF_MB=$(( IDX * CHUNK_MB ))
+  local CNT=$(( (SIZE - IDX * CHUNK + MB - 1) / MB ))
+  [ "$CNT" -gt "$CHUNK_MB" ] && CNT=$CHUNK_MB
+  [ "$CNT" -le 0 ] && return 0
+  log "block $(( IDX + 1 ))/$NBLOCKS offset $(( IDX * CHUNK )) sending ${CNT}MB"
+  dd if="$SRC" bs=$MB skip=$OFF_MB count=$CNT 2>/dev/null \
+    | $SSH -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$HOST" \
+        "dd of='$DST' bs=1M seek=$OFF_MB count=$CNT conv=notrunc iflag=fullblock 2>/dev/null" \
+    || log "block $(( IDX + 1 )) interrupted, will retry"
+}
+
+$SSH -o ConnectTimeout=10 "$HOST" "mkdir -p '$(dirname "$DST")'" || { echo "$PROG: cannot reach $HOST" >&2; exit 1; }
+
+while :; do
+  while :; do
+    CUR=$(remote_size)
+    if [ -z "$CUR" ]; then
+      log "no reply from remote, retrying in 30s"
+      sleep 30
+      continue
+    fi
+    if [ "$CUR" -gt "$SIZE" ]; then
+      log "remote file larger than source, truncating to $SIZE"
+      $SSH "$HOST" "truncate -s $SIZE '$DST'" || { sleep 10; continue; }
+      CUR=$SIZE
+    fi
+    [ "$CUR" -ge "$SIZE" ] && break
+    send_block $(( CUR / CHUNK ))
+  done
+
+  log "transfer complete, verifying sha1"
+  L=$(sha1_local)
+  R=$($SSH "$HOST" "sha1sum '$DST'" | awk '{print $1}')
+  if [ -z "$R" ]; then
+    log "no reply from remote during verify, retrying in 30s"
+    sleep 30
+    continue
+  fi
+  if [ "$L" = "$R" ]; then
+    log "VERIFY_OK $L"
+    exit 0
+  fi
+
+  log "VERIFY_FAIL, scanning chunks to locate corruption"
+  BAD=()
+  for ((i = 0; i < NBLOCKS; i++)); do
+    OFF=$(( i * CHUNK ))
+    LEN=$(( SIZE - OFF ))
+    [ "$LEN" -gt "$CHUNK" ] && LEN=$CHUNK
+    [ "$LEN" -le 0 ] && break
+    LH=$(block_sha_local $i)
+    RH=$(block_sha_remote $OFF $LEN)
+    if [ -z "$RH" ]; then
+      log "no reply from remote during scan, retrying in 30s"
+      sleep 30
+      continue 2
+    fi
+    if [ "$LH" != "$RH" ]; then
+      BAD+=("$i")
+      log "corrupt chunk $(( i + 1 )) (offset $OFF)"
+    fi
+  done
+  if [ "${#BAD[@]}" -eq 0 ]; then
+    log "VERIFY_FAIL but no corrupt chunk found; is the source file changing?"
+    exit 1
+  fi
+  log "rewriting ${#BAD[@]} bad chunk(s)"
+  for i in "${BAD[@]}"; do
+    send_block "$i"
+  done
+done

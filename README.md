@@ -14,6 +14,7 @@ Each subdirectory contains an independent skill defined in a `SKILL.md` file wit
 | [peng-crosspost-workflow](peng-crosspost-workflow/) | Coordinate Markdown articles into platform-ready drafts and publishing handoffs for WeChat, Xiaohongshu, X/Twitter, and Dev.to |
 | [peng-paper-pipeline](peng-paper-pipeline/) | Orchestrate an academic manuscript from scoping through data freeze, literature search, citation verification, figures, and writing to a gated pandoc DOCX build and pre-submission checks |
 | [peng-post-to-devto](peng-post-to-devto/) | Publish Markdown articles to Dev.to through the REST API with frontmatter, drafts, tags, covers, and canonical URLs |
+| [peng-remote-sendfile](peng-remote-sendfile/) | Resumable, integrity-checked transfer of large files to a remote host over ssh, with chunk-level corruption auto-repair |
 
 ## Usage
 
